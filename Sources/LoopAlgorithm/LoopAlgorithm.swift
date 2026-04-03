@@ -180,7 +180,10 @@ public struct LoopAlgorithm {
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         gradualTransitionsThreshold: Double? = 40.0,
-        momentumVelocityMaximum: LoopQuantity? = nil
+        momentumVelocityMaximum: LoopQuantity? = nil,
+        useAsymmetricMomentum: Bool = false,
+        momentumAlphaSlow: Double = 0.15,
+        momentumAlphaFast: Double = 0.85
     ) -> LoopPrediction<CarbType> where CarbType: CarbEntry, GlucoseType: GlucoseSampleValue, InsulinDoseType: InsulinDose {
 
         var prediction: [PredictedGlucoseValue] = []
@@ -312,7 +315,9 @@ public struct LoopAlgorithm {
             var useMomentum: Bool = true
             if algorithmEffectsOptions.contains(.momentum) {
                 let momentumInputData = glucoseHistory.filterDateRange(start.addingTimeInterval(-GlucoseMath.momentumDataInterval), start)
-                momentumEffects = momentumInputData.linearMomentumEffect(velocityMaximum: momentumVelocityMaximum)
+                momentumEffects = useAsymmetricMomentum
+                    ? momentumInputData.asymmetricMomentumEffect(velocityMaximum: momentumVelocityMaximum, alphaSlow: momentumAlphaSlow, alphaFast: momentumAlphaFast)
+                    : momentumInputData.linearMomentumEffect(velocityMaximum: momentumVelocityMaximum)
                 if !includingPositiveVelocityAndRC, let netMomentum = momentumEffects.netEffect(), netMomentum.quantity.doubleValue(for: .milligramsPerDeciliter) > 0 {
                     // positive momentum is turned off
                     useMomentum = false
@@ -403,7 +408,10 @@ public struct LoopAlgorithm {
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         gradualTransitionsThreshold: Double? = 40.0,
-        momentumVelocityMaximum: LoopQuantity? = nil
+        momentumVelocityMaximum: LoopQuantity? = nil,
+        useAsymmetricMomentum: Bool = false,
+        momentumAlphaSlow: Double = 0.15,
+        momentumAlphaFast: Double = 0.85
     ) -> LoopPrediction<CarbType> where CarbType: CarbEntry, GlucoseType: GlucoseSampleValue {
 
         let dosesRelativeToBasal = precomputedInsulin.annotatedDoses
@@ -508,7 +516,9 @@ public struct LoopAlgorithm {
                 let momentumInputData = glucoseHistory.filterDateRange(
                     start.addingTimeInterval(-GlucoseMath.momentumDataInterval), start
                 )
-                momentumEffects = momentumInputData.linearMomentumEffect(velocityMaximum: momentumVelocityMaximum)
+                momentumEffects = useAsymmetricMomentum
+                    ? momentumInputData.asymmetricMomentumEffect(velocityMaximum: momentumVelocityMaximum, alphaSlow: momentumAlphaSlow, alphaFast: momentumAlphaFast)
+                    : momentumInputData.linearMomentumEffect(velocityMaximum: momentumVelocityMaximum)
                 if !includingPositiveVelocityAndRC,
                    let netMomentum = momentumEffects.netEffect(),
                    netMomentum.quantity.doubleValue(for: .milligramsPerDeciliter) > 0 {
