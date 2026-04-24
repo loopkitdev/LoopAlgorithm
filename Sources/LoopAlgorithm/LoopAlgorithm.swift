@@ -577,7 +577,7 @@ public struct LoopAlgorithm {
     }
 
     // Computes an amount of insulin to correct the given prediction
-    static func insulinCorrection(
+    public static func insulinCorrection(
         prediction: [PredictedGlucoseValue],
         at deliveryDate: Date,
         target: GlucoseRangeTimeline,
@@ -594,7 +594,7 @@ public struct LoopAlgorithm {
     }
 
     // Computes a 30 minute temp basal dose to correct the given prediction
-    static func recommendTempBasal(
+    public static func recommendTempBasal(
         for correction: InsulinCorrection,
         neutralBasalRate: Double,
         activeInsulin: Double,
@@ -626,7 +626,7 @@ public struct LoopAlgorithm {
     }
 
     // Computes a bolus or low-temp basal dose to correct the given prediction
-    static func recommendAutomaticDose(
+    public static func recommendAutomaticDose(
         for correction: InsulinCorrection,
         applicationFactor: Double,
         neutralBasalRate: Double,
