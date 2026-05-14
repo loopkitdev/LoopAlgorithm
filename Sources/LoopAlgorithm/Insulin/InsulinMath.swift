@@ -357,28 +357,101 @@ extension Collection where Element == BasalRelativeDose {
             entry.netBasalUnits != 0
         })
 
-        guard let (start, end) = LoopMath.simulationDateRangeForSamples(activeEntries, from: start, to: end, duration: InsulinMath.longestInsulinActivityDuration, delta: delta) else {
+        let longestDIA = InsulinMath.longestInsulinActivityDuration
+        guard let (start, end) = LoopMath.simulationDateRangeForSamples(activeEntries, from: start, to: end, duration: longestDIA, delta: delta) else {
             return []
         }
 
-        var date = start
-        var values = [GlucoseEffect]()
         let unit = LoopUnit.milligramsPerDeciliter
 
-        repeat {
-            let value = reduce(0) { (value, dose) -> Double in
+        // Sort doses by startDate, pre-compute each dose's ISF (depends only on
+        // startDate, not on the evaluation date) and its asymptotic effect (the
+        // value `dose.glucoseEffect(at:)` returns once the dose is fully past
+        // its DIA — non-zero, since cumulative effect saturates rather than
+        // decays back to 0).
+        let sortedActive = activeEntries.sorted { $0.startDate < $1.startDate }
+        // Tuple form: (dose, isf, decayDate, asymptote). Nested structs aren't
+        // permitted inside a generic function in Swift.
+        let entries: [(dose: Element, isf: Double, decayDate: Date, asymptote: Double)] = sortedActive.map { dose in
+            guard let isfScheduleValue = insulinSensitivityHistory.closestPrior(to: dose.startDate),
+                  isfScheduleValue.endDate >= dose.startDate else {
+                preconditionFailure("ISF History must cover dose startDates")
+            }
+            let isf = isfScheduleValue.value.doubleValue(for: unit)
+            let decayDate = dose.endDate.addingTimeInterval(longestDIA)
+            // Asymptotic value: dose.glucoseEffect evaluated past full decay.
+            let asymptote = dose.glucoseEffect(
+                at: decayDate.addingTimeInterval(delta),
+                insulinSensitivity: isf,
+                delta: delta
+            )
+            return (dose, isf, decayDate, asymptote)
+        }
 
-                guard let isfScheduleValue = insulinSensitivityHistory.closestPrior(to: dose.startDate), isfScheduleValue.endDate >= dose.startDate else {
-                    preconditionFailure("ISF History must cover dose startDates")
+        var timePoints: [Date] = []
+        do {
+            var d = start
+            while d <= end { timePoints.append(d); d = d.addingTimeInterval(delta) }
+        }
+        let nPoints = timePoints.count
+        var values: [GlucoseEffect] = []
+        values.reserveCapacity(nPoints)
+
+        // Sliding window:
+        //   lastStarted: count of doses whose startDate <= date.
+        //   activeIndices: indices in [..lastStarted) that are NOT yet fully
+        //     decayed (decayDate >= date). Once a dose decays, its asymptote
+        //     is added to `accumulatedDecayed` and it is removed from the set.
+        //   accumulatedDecayed: sum of asymptotes for all decayed doses (a
+        //     constant baseline added to every subsequent timestep, because the
+        //     cumulative-effect timeline retains decayed contributions forever).
+        var lastStarted = 0
+        var activeIndices: [Int] = []
+        var accumulatedDecayed = 0.0
+
+        let progressEvery = Swift.max(500, nPoints / 50)
+        let progressEnabled = (ProcessInfo.processInfo.environment["GLUCOSE_EFFECTS_PROGRESS"] != nil)
+        let progressStart = Date()
+
+        for (ti, date) in timePoints.enumerated() {
+            while lastStarted < entries.count && entries[lastStarted].dose.startDate <= date {
+                activeIndices.append(lastStarted)
+                lastStarted += 1
+            }
+            // Drop decayed entries; absorb their asymptote into the constant.
+            var writeIdx = 0
+            for readIdx in 0..<activeIndices.count {
+                let i = activeIndices[readIdx]
+                if entries[i].decayDate < date {
+                    accumulatedDecayed += entries[i].asymptote
+                } else {
+                    activeIndices[writeIdx] = i
+                    writeIdx += 1
                 }
-                let isf = isfScheduleValue.value.doubleValue(for: unit)
-                let doseEffect = dose.glucoseEffect(at: date, insulinSensitivity: isf, delta: delta)
-                return value + doseEffect
+            }
+            if writeIdx < activeIndices.count {
+                activeIndices.removeLast(activeIndices.count - writeIdx)
             }
 
-            values.append(GlucoseEffect(startDate: date, quantity: LoopQuantity(unit: unit, doubleValue: value)))
-            date = date.addingTimeInterval(delta)
-        } while date <= end
+            var value = accumulatedDecayed
+            for i in activeIndices {
+                let e = entries[i]
+                value += e.dose.glucoseEffect(at: date, insulinSensitivity: e.isf, delta: delta)
+            }
+            values.append(GlucoseEffect(startDate: date,
+                                        quantity: LoopQuantity(unit: unit, doubleValue: value)))
+
+            if progressEnabled && (ti % progressEvery == 0) && ti > 0 {
+                let elapsed = Date().timeIntervalSince(progressStart)
+                let frac = Double(ti) / Double(nPoints)
+                let eta = elapsed / Swift.max(frac, 1e-6) - elapsed
+                let msg = String(format: "  glucoseEffects: %3.0f%% (%d/%d, %.1fs elapsed, ~%.1fs remaining, active=%d)\n",
+                                 frac*100, ti, nPoints, elapsed, eta, activeIndices.count)
+                if let d = msg.data(using: String.Encoding.utf8) {
+                    FileHandle.standardError.write(d)
+                }
+            }
+        }
 
         return values
     }
