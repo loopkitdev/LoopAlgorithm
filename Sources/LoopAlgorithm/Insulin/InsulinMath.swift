@@ -84,21 +84,63 @@ extension BasalRelativeDose {
     }
 
     func glucoseEffect(at date: Date, insulinSensitivity: Double, delta: TimeInterval) -> Double {
+        return glucoseEffect(at: date,
+                             activeSensitivity: insulinSensitivity,
+                             scheduleBaselineSensitivity: insulinSensitivity,
+                             delta: delta)
+    }
+
+    /// Decomposed glucose-effect: splits this dose's contribution into the
+    /// **active-insulin** piece (positive `netBasalUnits` — delivered insulin
+    /// lowering BG, scaled by `activeSensitivity`) and the **EGP-credit**
+    /// piece (negative `netBasalUnits` — shortfall vs scheduled basal, treated
+    /// as positive BG-effect, scaled by `scheduleBaselineSensitivity`).
+    ///
+    /// At `activeSensitivity == scheduleBaselineSensitivity` (the default in
+    /// the single-argument overload), output is bit-identical to the original
+    /// `netBasalUnits × -ISF × pd` formula.
+    ///
+    /// Passing different values lets sensitivity overrides (exercise, sick-
+    /// day) scale only the term they physically affect. An exercise preset
+    /// that means "insulin works 2× harder right now" should boost
+    /// `activeSensitivity` but leave `scheduleBaselineSensitivity` at
+    /// scheduled — otherwise the EGP-credit assumption-from-suspending also
+    /// gets 2×, which is the opposite of what the model physically represents.
+    func glucoseEffect(at date: Date,
+                       activeSensitivity: Double,
+                       scheduleBaselineSensitivity: Double,
+                       delta: TimeInterval) -> Double {
         let time = date.timeIntervalSince(startDate)
 
         guard time >= 0 else {
             return 0
         }
 
-        // Consider doses within the delta time window as momentary
+        let pd: Double
         if endDate.timeIntervalSince(startDate) <= 1.05 * delta {
-            return netBasalUnits * -insulinSensitivity * (1.0 - insulinModel.percentEffectRemaining(at: time))
+            pd = 1.0 - insulinModel.percentEffectRemaining(at: time)
         } else {
-            return netBasalUnits * -insulinSensitivity * continuousDeliveryPercentEffect(at: date, delta: delta)
+            pd = continuousDeliveryPercentEffect(at: date, delta: delta)
         }
+        let nbu = netBasalUnits
+        let active = Swift.max(0, nbu)         // delivered-above-schedule (lowers BG)
+        let egpCredit = Swift.min(0, nbu)      // shortfall-vs-schedule (raises BG; EGP credit)
+        return active * -activeSensitivity * pd + egpCredit * -scheduleBaselineSensitivity * pd
     }
 
     func glucoseEffect(during interval: DateInterval, insulinSensitivity: Double, delta: TimeInterval) -> Double {
+        return glucoseEffect(during: interval,
+                             activeSensitivity: insulinSensitivity,
+                             scheduleBaselineSensitivity: insulinSensitivity,
+                             delta: delta)
+    }
+
+    /// Interval-form decomposed glucose-effect. Same split convention as the
+    /// point-form `glucoseEffect(at:activeSensitivity:scheduleBaselineSensitivity:delta:)`.
+    func glucoseEffect(during interval: DateInterval,
+                       activeSensitivity: Double,
+                       scheduleBaselineSensitivity: Double,
+                       delta: TimeInterval) -> Double {
         let start = interval.start.timeIntervalSince(startDate)
         let end = interval.end.timeIntervalSince(startDate)
 
@@ -106,7 +148,6 @@ extension BasalRelativeDose {
             return 0
         }
 
-        // Consider doses within the delta time window as momentary
         let effect: Double
         if endDate.timeIntervalSince(startDate) <= 1.05 * delta {
             effect = insulinModel.percentEffectRemaining(at: start) - insulinModel.percentEffectRemaining(at: end)
@@ -115,7 +156,10 @@ extension BasalRelativeDose {
             let endPercentRemaining = 1 - continuousDeliveryPercentEffect(at: interval.end, delta: delta)
             effect = startPercentRemaining - endPercentRemaining
         }
-        return netBasalUnits * -insulinSensitivity * effect
+        let nbu = netBasalUnits
+        let active = Swift.max(0, nbu)
+        let egpCredit = Swift.min(0, nbu)
+        return active * -activeSensitivity * effect + egpCredit * -scheduleBaselineSensitivity * effect
     }
 }
 
@@ -352,6 +396,23 @@ extension Collection where Element == BasalRelativeDose {
         to end: Date? = nil,
         delta: TimeInterval = TimeInterval(/* minutes: */60 * 5)
     ) -> [GlucoseEffect] {
+        return glucoseEffects(insulinSensitivityHistory: insulinSensitivityHistory,
+                              scheduleBaselineSensitivityHistory: nil,
+                              from: start, to: end, delta: delta)
+    }
+
+    /// Decomposed timeline of glucose effects. The `insulinSensitivityHistory`
+    /// schedule scales the **active-insulin** term (positive `netBasalUnits`),
+    /// while `scheduleBaselineSensitivityHistory` (when non-nil) scales the
+    /// **EGP-credit** term (negative `netBasalUnits`). With nil, output is
+    /// bit-identical to the single-schedule overload.
+    public func glucoseEffects(
+        insulinSensitivityHistory: [AbsoluteScheduleValue<LoopQuantity>],
+        scheduleBaselineSensitivityHistory: [AbsoluteScheduleValue<LoopQuantity>]?,
+        from start: Date? = nil,
+        to end: Date? = nil,
+        delta: TimeInterval = TimeInterval(/* minutes: */60 * 5)
+    ) -> [GlucoseEffect] {
 
         let activeEntries = self.filter({ entry in
             entry.netBasalUnits != 0
@@ -364,28 +425,37 @@ extension Collection where Element == BasalRelativeDose {
 
         let unit = LoopUnit.milligramsPerDeciliter
 
-        // Sort doses by startDate, pre-compute each dose's ISF (depends only on
-        // startDate, not on the evaluation date) and its asymptotic effect (the
-        // value `dose.glucoseEffect(at:)` returns once the dose is fully past
-        // its DIA — non-zero, since cumulative effect saturates rather than
-        // decays back to 0).
+        // Sort doses by startDate, pre-compute each dose's ISFs (depend only
+        // on startDate, not on the evaluation date) and its asymptotic effect
+        // (the value `dose.glucoseEffect(at:)` returns once the dose is fully
+        // past its DIA — non-zero, since cumulative effect saturates rather
+        // than decays back to 0).
         let sortedActive = activeEntries.sorted { $0.startDate < $1.startDate }
-        // Tuple form: (dose, isf, decayDate, asymptote). Nested structs aren't
-        // permitted inside a generic function in Swift.
-        let entries: [(dose: Element, isf: Double, decayDate: Date, asymptote: Double)] = sortedActive.map { dose in
+        // Tuple form: (dose, activeISF, baselineISF, decayDate, asymptote).
+        // Nested structs aren't permitted inside a generic function in Swift.
+        let entries: [(dose: Element, activeISF: Double, baselineISF: Double, decayDate: Date, asymptote: Double)] = sortedActive.map { dose in
             guard let isfScheduleValue = insulinSensitivityHistory.closestPrior(to: dose.startDate),
                   isfScheduleValue.endDate >= dose.startDate else {
                 preconditionFailure("ISF History must cover dose startDates")
             }
-            let isf = isfScheduleValue.value.doubleValue(for: unit)
+            let activeISF = isfScheduleValue.value.doubleValue(for: unit)
+            let baselineISF: Double
+            if let baseHistory = scheduleBaselineSensitivityHistory,
+               let baseEntry = baseHistory.closestPrior(to: dose.startDate),
+               baseEntry.endDate >= dose.startDate {
+                baselineISF = baseEntry.value.doubleValue(for: unit)
+            } else {
+                baselineISF = activeISF
+            }
             let decayDate = dose.endDate.addingTimeInterval(longestDIA)
-            // Asymptotic value: dose.glucoseEffect evaluated past full decay.
+            // Asymptotic value: decomposed glucoseEffect evaluated past full decay.
             let asymptote = dose.glucoseEffect(
                 at: decayDate.addingTimeInterval(delta),
-                insulinSensitivity: isf,
+                activeSensitivity: activeISF,
+                scheduleBaselineSensitivity: baselineISF,
                 delta: delta
             )
-            return (dose, isf, decayDate, asymptote)
+            return (dose, activeISF, baselineISF, decayDate, asymptote)
         }
 
         var timePoints: [Date] = []
@@ -436,7 +506,10 @@ extension Collection where Element == BasalRelativeDose {
             var value = accumulatedDecayed
             for i in activeIndices {
                 let e = entries[i]
-                value += e.dose.glucoseEffect(at: date, insulinSensitivity: e.isf, delta: delta)
+                value += e.dose.glucoseEffect(at: date,
+                                              activeSensitivity: e.activeISF,
+                                              scheduleBaselineSensitivity: e.baselineISF,
+                                              delta: delta)
             }
             values.append(GlucoseEffect(startDate: date,
                                         quantity: LoopQuantity(unit: unit, doubleValue: value)))
@@ -474,6 +547,32 @@ extension Collection where Element == BasalRelativeDose {
         to end: Date? = nil,
         delta: TimeInterval = TimeInterval(/* minutes: */60 * 5)
     ) -> [GlucoseEffect] {
+        return glucoseEffectsMidAbsorptionISF(
+            longestEffectDuration: longestEffectDuration,
+            insulinSensitivityHistory: insulinSensitivityHistory,
+            scheduleBaselineSensitivityHistory: nil,
+            from: start, to: end, delta: delta
+        )
+    }
+
+    /// Decomposed mid-absorption variant. The `insulinSensitivityHistory`
+    /// schedule scales the active-insulin term (positive `netBasalUnits`);
+    /// `scheduleBaselineSensitivityHistory` (when non-nil) scales the EGP-
+    /// credit term (negative `netBasalUnits`). With nil, output is bit-
+    /// identical to the single-schedule overload. The baseline ISF is looked
+    /// up at the start of each active-schedule segment; if the baseline
+    /// schedule changes within an active segment, the segment-start value
+    /// applies — fine for the typical case (baseline is the unmodulated
+    /// hourly schedule, active is the same plus fine-grained per-step
+    /// boosts).
+    public func glucoseEffectsMidAbsorptionISF(
+        longestEffectDuration: TimeInterval = InsulinMath.defaultInsulinActivityDuration,
+        insulinSensitivityHistory: [AbsoluteScheduleValue<LoopQuantity>],
+        scheduleBaselineSensitivityHistory: [AbsoluteScheduleValue<LoopQuantity>]?,
+        from start: Date? = nil,
+        to end: Date? = nil,
+        delta: TimeInterval = TimeInterval(/* minutes: */60 * 5)
+    ) -> [GlucoseEffect] {
         guard let (start, end) = LoopMath.simulationDateRangeForSamples(self.filter({ entry in
             entry.netBasalUnits != 0
         }), from: start, to: end, duration: longestEffectDuration, delta: delta) else {
@@ -482,6 +581,7 @@ extension Collection where Element == BasalRelativeDose {
 
         let unit = LoopUnit.milligramsPerDeciliter
         let dosesArray = Array(self)
+        let egpHistory = scheduleBaselineSensitivityHistory
 
         // Build the list of time points up front. timePoints[i] is the date at
         // which the cumulative effect through that time is recorded.
@@ -526,9 +626,19 @@ extension Collection where Element == BasalRelativeDose {
                         let segStart = Swift.max(lastDate, segment.startDate)
                         let segEnd   = Swift.min(date,    segment.endDate)
                         if segStart != segEnd {
+                            let activeISF = segment.value.doubleValue(for: unit)
+                            let baselineISF: Double
+                            if let egp = egpHistory,
+                               let baseEntry = egp.closestPrior(to: segStart),
+                               baseEntry.endDate >= segStart {
+                                baselineISF = baseEntry.value.doubleValue(for: unit)
+                            } else {
+                                baselineISF = activeISF
+                            }
                             inc += dose.glucoseEffect(
                                 during: DateInterval(start: segStart, end: segEnd),
-                                insulinSensitivity: segment.value.doubleValue(for: unit),
+                                activeSensitivity: activeISF,
+                                scheduleBaselineSensitivity: baselineISF,
                                 delta: delta
                             )
                         }

@@ -173,6 +173,13 @@ public struct LoopAlgorithm {
         carbEntries: [CarbType],
         basal: [AbsoluteScheduleValue<Double>],
         sensitivity: [AbsoluteScheduleValue<LoopQuantity>],
+        // Phase 1: optional separate sensitivity schedule for the EGP-credit
+        // (negative `netBasalUnits`) glucose-effect term. When nil, `sensitivity`
+        // is used for both the active-insulin and EGP-credit components — bit-
+        // identical to pre-Phase-1 behavior. When non-nil, callers can boost
+        // `sensitivity` (active term: dose-rec sees it; insulin works harder)
+        // without amplifying the model's implicit EGP-credit assumption.
+        scheduleBaselineSensitivity: [AbsoluteScheduleValue<LoopQuantity>]? = nil,
         carbRatio: [AbsoluteScheduleValue<Double>],
         algorithmEffectsOptions: AlgorithmEffectsOptions = .all,
         useIntegralRetrospectiveCorrection: Bool = false,
@@ -222,11 +229,13 @@ public struct LoopAlgorithm {
             if useMidAbsorptionISF {
                 insulinEffects = dosesRelativeToBasal.glucoseEffectsMidAbsorptionISF(
                     insulinSensitivityHistory: sensitivity,
+                    scheduleBaselineSensitivityHistory: scheduleBaselineSensitivity,
                     from: insulinEffectsInterval.start,
                     to: insulinEffectsInterval.end)
             } else {
                 insulinEffects = dosesRelativeToBasal.glucoseEffects(
                     insulinSensitivityHistory: sensitivity,
+                    scheduleBaselineSensitivityHistory: scheduleBaselineSensitivity,
                     from: insulinEffectsInterval.start,
                     to: insulinEffectsInterval.end)
             }
