@@ -180,6 +180,13 @@ public struct LoopAlgorithm {
         // `sensitivity` (active term: dose-rec sees it; insulin works harder)
         // without amplifying the model's implicit EGP-credit assumption.
         scheduleBaselineSensitivity: [AbsoluteScheduleValue<LoopQuantity>]? = nil,
+        // Phase 2: how to split each dose's effect into active-insulin vs
+        // EGP-credit. `.netBasalUnits` (default) is the classic sign-split.
+        // `.physicalDelivery` splits physical-volume vs scheduled-basal-offset,
+        // so a `sensitivity` (active) boost amplifies real insulin even when
+        // delivery is below scheduled basal. Only meaningful when
+        // `scheduleBaselineSensitivity` differs from `sensitivity`.
+        sensitivityDecomposition: SensitivityDecomposition = .netBasalUnits,
         carbRatio: [AbsoluteScheduleValue<Double>],
         algorithmEffectsOptions: AlgorithmEffectsOptions = .all,
         useIntegralRetrospectiveCorrection: Bool = false,
@@ -231,13 +238,15 @@ public struct LoopAlgorithm {
                     insulinSensitivityHistory: sensitivity,
                     scheduleBaselineSensitivityHistory: scheduleBaselineSensitivity,
                     from: insulinEffectsInterval.start,
-                    to: insulinEffectsInterval.end)
+                    to: insulinEffectsInterval.end,
+                    decomposition: sensitivityDecomposition)
             } else {
                 insulinEffects = dosesRelativeToBasal.glucoseEffects(
                     insulinSensitivityHistory: sensitivity,
                     scheduleBaselineSensitivityHistory: scheduleBaselineSensitivity,
                     from: insulinEffectsInterval.start,
-                    to: insulinEffectsInterval.end)
+                    to: insulinEffectsInterval.end,
+                    decomposition: sensitivityDecomposition)
             }
 
             // ICE
