@@ -14,6 +14,27 @@ public struct InsulinMath {
     public static let longestInsulinActivityDuration: TimeInterval = TimeInterval(hours: 6) + TimeInterval(minutes: 10)
 }
 
+/// How a dose's glucose effect is decomposed into an active-insulin term
+/// (scaled by `activeSensitivity`, lowers BG) and an EGP-credit term (scaled
+/// by `scheduleBaselineSensitivity`, raises BG). Both decompositions split
+/// `netBasalUnits` into `(active − egpRaise) = netBasalUnits`, so when the two
+/// sensitivities are equal BOTH reduce to the classic `netBasalUnits × -ISF`.
+public enum SensitivityDecomposition: Sendable {
+    /// Phase 1: split by SIGN of `netBasalUnits`.
+    ///   active   = max(0, nbu)   (delivered above schedule)
+    ///   egpRaise = max(0, -nbu)  (shortfall below schedule)
+    /// One term is always zero. A sub-basal delivery has active = 0, so
+    /// boosting `activeSensitivity` cannot amplify it.
+    case netBasalUnits
+    /// Phase 2: split by PHYSICAL delivery vs scheduled-basal offset.
+    ///   active   = volume                 (all physically delivered insulin)
+    ///   egpRaise = volume - nbu           (the scheduled-basal EGP offset)
+    /// Both terms are ≥ 0. A sub-basal delivery still has active = volume, so
+    /// boosting `activeSensitivity` amplifies the real insulin on board — the
+    /// physically-correct behavior for a sensitivity override.
+    case physicalDelivery
+}
+
 extension BasalRelativeDose {
     private func continuousDeliveryInsulinOnBoard(at date: Date, delta: TimeInterval) -> Double {
         let doseDuration = endDate.timeIntervalSince(startDate)  // t1
@@ -106,10 +127,24 @@ extension BasalRelativeDose {
     /// `activeSensitivity` but leave `scheduleBaselineSensitivity` at
     /// scheduled — otherwise the EGP-credit assumption-from-suspending also
     /// gets 2×, which is the opposite of what the model physically represents.
+    /// Splits `netBasalUnits` into (activeUnits, egpRaiseUnits) per the chosen
+    /// decomposition. Invariant: `activeUnits - egpRaiseUnits == netBasalUnits`.
+    /// effect = activeUnits × -activeSensitivity × pd + egpRaiseUnits × +egpSensitivity × pd.
+    func decomposedUnits(_ decomposition: SensitivityDecomposition) -> (active: Double, egpRaise: Double) {
+        let nbu = netBasalUnits
+        switch decomposition {
+        case .netBasalUnits:
+            return (Swift.max(0, nbu), Swift.max(0, -nbu))
+        case .physicalDelivery:
+            return (volume, volume - nbu)
+        }
+    }
+
     func glucoseEffect(at date: Date,
                        activeSensitivity: Double,
                        scheduleBaselineSensitivity: Double,
-                       delta: TimeInterval) -> Double {
+                       delta: TimeInterval,
+                       decomposition: SensitivityDecomposition = .netBasalUnits) -> Double {
         let time = date.timeIntervalSince(startDate)
 
         guard time >= 0 else {
@@ -122,10 +157,8 @@ extension BasalRelativeDose {
         } else {
             pd = continuousDeliveryPercentEffect(at: date, delta: delta)
         }
-        let nbu = netBasalUnits
-        let active = Swift.max(0, nbu)         // delivered-above-schedule (lowers BG)
-        let egpCredit = Swift.min(0, nbu)      // shortfall-vs-schedule (raises BG; EGP credit)
-        return active * -activeSensitivity * pd + egpCredit * -scheduleBaselineSensitivity * pd
+        let (active, egpRaise) = decomposedUnits(decomposition)
+        return active * -activeSensitivity * pd + egpRaise * scheduleBaselineSensitivity * pd
     }
 
     func glucoseEffect(during interval: DateInterval, insulinSensitivity: Double, delta: TimeInterval) -> Double {
@@ -140,7 +173,8 @@ extension BasalRelativeDose {
     func glucoseEffect(during interval: DateInterval,
                        activeSensitivity: Double,
                        scheduleBaselineSensitivity: Double,
-                       delta: TimeInterval) -> Double {
+                       delta: TimeInterval,
+                       decomposition: SensitivityDecomposition = .netBasalUnits) -> Double {
         let start = interval.start.timeIntervalSince(startDate)
         let end = interval.end.timeIntervalSince(startDate)
 
@@ -156,10 +190,8 @@ extension BasalRelativeDose {
             let endPercentRemaining = 1 - continuousDeliveryPercentEffect(at: interval.end, delta: delta)
             effect = startPercentRemaining - endPercentRemaining
         }
-        let nbu = netBasalUnits
-        let active = Swift.max(0, nbu)
-        let egpCredit = Swift.min(0, nbu)
-        return active * -activeSensitivity * effect + egpCredit * -scheduleBaselineSensitivity * effect
+        let (active, egpRaise) = decomposedUnits(decomposition)
+        return active * -activeSensitivity * effect + egpRaise * scheduleBaselineSensitivity * effect
     }
 }
 
@@ -411,11 +443,15 @@ extension Collection where Element == BasalRelativeDose {
         scheduleBaselineSensitivityHistory: [AbsoluteScheduleValue<LoopQuantity>]?,
         from start: Date? = nil,
         to end: Date? = nil,
-        delta: TimeInterval = TimeInterval(/* minutes: */60 * 5)
+        delta: TimeInterval = TimeInterval(/* minutes: */60 * 5),
+        decomposition: SensitivityDecomposition = .netBasalUnits
     ) -> [GlucoseEffect] {
 
+        // In physical-delivery mode a net-zero basal still carries physical
+        // insulin (active = volume) that an activeSensitivity boost makes more
+        // potent than the EGP offset, so it cannot be filtered on net units.
         let activeEntries = self.filter({ entry in
-            entry.netBasalUnits != 0
+            decomposition == .physicalDelivery ? entry.volume != 0 : entry.netBasalUnits != 0
         })
 
         let longestDIA = InsulinMath.longestInsulinActivityDuration
@@ -453,7 +489,8 @@ extension Collection where Element == BasalRelativeDose {
                 at: decayDate.addingTimeInterval(delta),
                 activeSensitivity: activeISF,
                 scheduleBaselineSensitivity: baselineISF,
-                delta: delta
+                delta: delta,
+                decomposition: decomposition
             )
             return (dose, activeISF, baselineISF, decayDate, asymptote)
         }
@@ -509,7 +546,8 @@ extension Collection where Element == BasalRelativeDose {
                 value += e.dose.glucoseEffect(at: date,
                                               activeSensitivity: e.activeISF,
                                               scheduleBaselineSensitivity: e.baselineISF,
-                                              delta: delta)
+                                              delta: delta,
+                                              decomposition: decomposition)
             }
             values.append(GlucoseEffect(startDate: date,
                                         quantity: LoopQuantity(unit: unit, doubleValue: value)))
@@ -571,10 +609,11 @@ extension Collection where Element == BasalRelativeDose {
         scheduleBaselineSensitivityHistory: [AbsoluteScheduleValue<LoopQuantity>]?,
         from start: Date? = nil,
         to end: Date? = nil,
-        delta: TimeInterval = TimeInterval(/* minutes: */60 * 5)
+        delta: TimeInterval = TimeInterval(/* minutes: */60 * 5),
+        decomposition: SensitivityDecomposition = .netBasalUnits
     ) -> [GlucoseEffect] {
         guard let (start, end) = LoopMath.simulationDateRangeForSamples(self.filter({ entry in
-            entry.netBasalUnits != 0
+            decomposition == .physicalDelivery ? entry.volume != 0 : entry.netBasalUnits != 0
         }), from: start, to: end, duration: longestEffectDuration, delta: delta) else {
             return []
         }
@@ -639,7 +678,8 @@ extension Collection where Element == BasalRelativeDose {
                                 during: DateInterval(start: segStart, end: segEnd),
                                 activeSensitivity: activeISF,
                                 scheduleBaselineSensitivity: baselineISF,
-                                delta: delta
+                                delta: delta,
+                                decomposition: decomposition
                             )
                         }
                     }
