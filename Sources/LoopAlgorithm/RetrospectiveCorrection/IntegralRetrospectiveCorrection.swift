@@ -20,6 +20,14 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
     /// RetrospectiveCorrection protocol variables
     /// Standard effect duration
     let effectDuration: TimeInterval
+    /// Asymmetric correction gains (default 1.0 == standard symmetric IRC).
+    /// `dropGainScale` multiplies the correction when the current discrepancy run
+    /// is negative (observed BG dropping faster than the model predicted =
+    /// sensitivity); `riseGainScale` when positive (resistance). Set
+    /// dropGainScale > 1 / riseGainScale < 1 to respond more strongly to drops
+    /// (lows-protective) than to rises.
+    let dropGainScale: Double
+    let riseGainScale: Double
     /// Overall retrospective correction effect
     public var totalGlucoseCorrectionEffect: LoopQuantity?
     
@@ -72,8 +80,11 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
     var currentDate: Date = Date()
 
     public init(effectDuration: TimeInterval,
+                dropGainScale: Double = 1.0, riseGainScale: Double = 1.0,
                 maxCorrectionVelocity: LoopQuantity? = IntegralRetrospectiveCorrection.defaultMaxCorrectionVelocity) {
         self.effectDuration = effectDuration
+        self.dropGainScale = dropGainScale
+        self.riseGainScale = riseGainScale
         self.maxCorrectionVelocity = maxCorrectionVelocity
     }
     
@@ -171,7 +182,16 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
             // correction value scaled to account for extended effect duration
             scaledCorrection = totalCorrection * effectDuration.minutes / integralCorrectionEffectDuration!.minutes
         }
-        
+
+        // Asymmetric retrospective correction: scale the correction by the sign
+        // of the current (same-sign) discrepancy run. A negative discrepancy means
+        // BG dropped faster than the model predicted (sensitivity) -> the correction
+        // is negative -> forecast bends down -> Loop doses less / suspends earlier.
+        // Amplifying that side (dropGainScale > 1) makes IRC respond faster to
+        // sensitivity; damping the rise side (riseGainScale < 1) makes it slower to
+        // add insulin on resistance. Defaults 1.0/1.0 reduce to standard IRC.
+        scaledCorrection *= (currentDiscrepancyValue < 0 ? dropGainScale : riseGainScale)
+
         let retrospectionTimeInterval = currentDiscrepancy.endDate.timeIntervalSince(currentDiscrepancy.startDate)
         let discrepancyTime = max(retrospectionTimeInterval, retrospectiveCorrectionGroupingInterval)
         var velocityValue = scaledCorrection / discrepancyTime

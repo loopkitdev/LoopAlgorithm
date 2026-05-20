@@ -190,6 +190,10 @@ public struct LoopAlgorithm {
         carbRatio: [AbsoluteScheduleValue<Double>],
         algorithmEffectsOptions: AlgorithmEffectsOptions = .all,
         useIntegralRetrospectiveCorrection: Bool = false,
+        // Asymmetric IRC gains (only used when useIntegralRetrospectiveCorrection
+        // is true). Default 1.0/1.0 == standard symmetric IRC.
+        ircDropGainScale: Double = 1.0,
+        ircRiseGainScale: Double = 1.0,
         includingPositiveVelocityAndRC: Bool = true,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
@@ -278,7 +282,7 @@ public struct LoopAlgorithm {
         let rc: RetrospectiveCorrection
 
         if useIntegralRetrospectiveCorrection {
-            rc = IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
+            rc = IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale)
         } else {
             rc = StandardRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
         }
@@ -427,6 +431,10 @@ public struct LoopAlgorithm {
         carbRatio: [AbsoluteScheduleValue<Double>],
         algorithmEffectsOptions: AlgorithmEffectsOptions = .all,
         useIntegralRetrospectiveCorrection: Bool = false,
+        // Asymmetric IRC gains (only used when useIntegralRetrospectiveCorrection
+        // is true). Default 1.0/1.0 == standard symmetric IRC.
+        ircDropGainScale: Double = 1.0,
+        ircRiseGainScale: Double = 1.0,
         includingPositiveVelocityAndRC: Bool = true,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
@@ -497,7 +505,7 @@ public struct LoopAlgorithm {
             .combinedSums(of: LoopMath.retrospectiveCorrectionGroupingInterval * 1.01)
 
         let rc: RetrospectiveCorrection = useIntegralRetrospectiveCorrection
-            ? IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
+            ? IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale)
             : StandardRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
 
         var prediction: [PredictedGlucoseValue] = []
