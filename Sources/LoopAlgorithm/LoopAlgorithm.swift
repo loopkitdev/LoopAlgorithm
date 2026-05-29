@@ -202,7 +202,13 @@ public struct LoopAlgorithm {
         useAsymmetricMomentum: Bool = false,
         useHybridAsymmetricMomentum: Bool = false,
         momentumAlphaSlow: Double = 0.15,
-        momentumAlphaFast: Double = 0.85
+        momentumAlphaFast: Double = 0.85,
+        // Asymmetric HIGH correction (rise-only BG-addition with fast-off on downtrend).
+        // Off by default == bit-identical to no high-correction.
+        highCorrectionEnabled: Bool = false,
+        highCorrectionRiseGain: Double = 1.0,
+        highCorrectionEffectDurationMinutes: Double = 60.0,
+        highCorrectionFastOffVelocity: Double = 0.5
     ) -> LoopPrediction<CarbType> where CarbType: CarbEntry, GlucoseType: GlucoseSampleValue, InsulinDoseType: InsulinDose {
 
         var prediction: [PredictedGlucoseValue] = []
@@ -351,6 +357,30 @@ public struct LoopAlgorithm {
                 }
             } else {
                 useMomentum = false
+            }
+
+            // Asymmetric HIGH correction: rise-only BG-addition driven by the positive
+            // retrospective discrepancy, with a fast-off velocity gate. Appended like RC.
+            if highCorrectionEnabled {
+                let recentVelocity: Double = {
+                    let recent = Array(glucoseHistory.suffix(4))
+                    guard recent.count >= 2, let f = recent.first, let l = recent.last else { return 0 }
+                    let dtMin = l.startDate.timeIntervalSince(f.startDate) / 60.0
+                    guard dtMin > 0 else { return 0 }
+                    return (l.quantity.doubleValue(for: .milligramsPerDeciliter)
+                            - f.quantity.doubleValue(for: .milligramsPerDeciliter)) / dtMin
+                }()
+                let hc = AsymmetricHighCorrection(
+                    effectDuration: TimeInterval(minutes: highCorrectionEffectDurationMinutes),
+                    riseGain: highCorrectionRiseGain,
+                    fastOffVelocity: highCorrectionFastOffVelocity)
+                let hcEffects = hc.computeEffect(
+                    startingAt: latestGlucose,
+                    retrospectiveGlucoseDiscrepanciesSummed: retrospectiveGlucoseDiscrepanciesSummed,
+                    recencyInterval: TimeInterval(minutes: 15),
+                    retrospectiveCorrectionGroupingInterval: LoopMath.retrospectiveCorrectionGroupingInterval,
+                    recentVelocity: recentVelocity)
+                if !hcEffects.isEmpty { effects.append(hcEffects) }
             }
 
             prediction = LoopMath.predictGlucose(
