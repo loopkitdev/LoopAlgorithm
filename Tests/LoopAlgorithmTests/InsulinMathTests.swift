@@ -427,4 +427,66 @@ class InsulinMathTests: XCTestCase {
         XCTAssertEqual(timeline, expectedValues)
     }
 
+    // A constant-rate continuous dose split into two contiguous sub-doses at an
+    // arbitrary interior point should produce the same insulin-on-board curve as
+    // the unified dose -- the partition is just a labeling choice.
+    //
+    // continuousDeliveryInsulinOnBoard chunks each sub-dose relative to its own
+    // startDate in `delta` steps, with the loop bound clamped to that sub-dose's
+    // doseDuration and an `insulinModel.delay` overshoot included past `time`.
+    // The clamp truncates the first sub-dose's delay overshoot at the split
+    // point, while the second sub-dose's leading chunks don't compensate.
+    // Sum-of-sub-doses approximately equals unified, but not exactly -- visible
+    // as a small bump in Active Insulin at any basal-history boundary that
+    // happens to split a long basal-typed dose (e.g. a suspend across midnight).
+    //
+    // This test is wrapped in XCTExpectFailure to record the discrepancy as a
+    // known issue. When continuousDeliveryInsulinOnBoard is rewritten to share a
+    // single chunk lattice across sub-doses (or to integrate analytically),
+    // remove the XCTExpectFailure wrapper and this test should pass.
+    func testInsulinOnBoardIsPartitionAdditive() {
+        let start = dateFormatter.date(from: "2015-10-15T19:00:00")!
+        let split = start.addingTimeInterval(.hours(3))
+        let end = start.addingTimeInterval(.hours(6))
+        let scheduledRate: Double = 1.0
+        let delta: TimeInterval = .minutes(5)
+
+        let unified = BasalRelativeDose(
+            type: .basal(scheduledRate: scheduledRate),
+            startDate: start,
+            endDate: end,
+            volume: 0
+        )
+
+        let sub1 = BasalRelativeDose(
+            type: .basal(scheduledRate: scheduledRate),
+            startDate: start,
+            endDate: split,
+            volume: 0
+        )
+
+        let sub2 = BasalRelativeDose(
+            type: .basal(scheduledRate: scheduledRate),
+            startDate: split,
+            endDate: end,
+            volume: 0
+        )
+
+        // Sample around the split (where the artifact lives) and a few points beyond.
+        let evalOffsets: [TimeInterval] = [
+            .minutes(-10), .minutes(-5), .minutes(0), .minutes(5), .minutes(10),
+            .minutes(30), .hours(1), .hours(2), .hours(3), .hours(6),
+        ]
+
+        XCTExpectFailure("continuousDeliveryInsulinOnBoard is not exactly partition-additive — see comment above this test.") {
+            for offset in evalOffsets {
+                let t = split.addingTimeInterval(offset)
+                let unifiedIOB = unified.insulinOnBoard(at: t, delta: delta)
+                let splitIOB = sub1.insulinOnBoard(at: t, delta: delta) + sub2.insulinOnBoard(at: t, delta: delta)
+                XCTAssertEqual(unifiedIOB, splitIOB, accuracy: 1e-9,
+                               "IOB mismatch at split + \(offset)s: unified=\(unifiedIOB) split=\(splitIOB) diff=\(unifiedIOB - splitIOB)")
+            }
+        }
+    }
+
 }
