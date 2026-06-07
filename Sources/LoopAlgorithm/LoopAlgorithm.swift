@@ -118,6 +118,20 @@ public struct LoopPrediction<CarbStatusType: CarbEntry> {
     public var dosesRelativeToBasal: [BasalRelativeDose]
     public var activeInsulin: Double?
     public var activeCarbs: Double?
+
+    public init(
+        glucose: [PredictedGlucoseValue],
+        effects: LoopAlgorithmEffects<CarbStatusType>,
+        dosesRelativeToBasal: [BasalRelativeDose] = [],
+        activeInsulin: Double? = nil,
+        activeCarbs: Double? = nil
+    ) {
+        self.glucose = glucose
+        self.effects = effects
+        self.dosesRelativeToBasal = dosesRelativeToBasal
+        self.activeInsulin = activeInsulin
+        self.activeCarbs = activeCarbs
+    }
 }
 
 public struct LoopAlgorithm {
