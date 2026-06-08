@@ -28,6 +28,15 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
     /// (lows-protective) than to rises.
     let dropGainScale: Double
     let riseGainScale: Double
+    /// Carry-negative-memory ("remember the low"). When > 0 and the current
+    /// discrepancy run is POSITIVE (a rebound), the integral continues back
+    /// across the sign flip through the immediately-preceding NEGATIVE run
+    /// (the low) instead of resetting at the flip. Those negative discrepancies
+    /// are scaled by `lowMemoryScale` and integrated first, so they decay
+    /// (via `integralForget`) into the rebound and offset its upward push.
+    /// One-sided: a positive run is never carried into a drop. 0 == off
+    /// (standard sign-contiguous reset). Typical: 0.5–1.0.
+    let lowMemoryScale: Double
     /// Overall retrospective correction effect
     public var totalGlucoseCorrectionEffect: LoopQuantity?
     
@@ -81,10 +90,12 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
 
     public init(effectDuration: TimeInterval,
                 dropGainScale: Double = 1.0, riseGainScale: Double = 1.0,
+                lowMemoryScale: Double = 0.0,
                 maxCorrectionVelocity: LoopQuantity? = IntegralRetrospectiveCorrection.defaultMaxCorrectionVelocity) {
         self.effectDuration = effectDuration
         self.dropGainScale = dropGainScale
         self.riseGainScale = riseGainScale
+        self.lowMemoryScale = lowMemoryScale
         self.maxCorrectionVelocity = maxCorrectionVelocity
     }
     
@@ -132,16 +143,36 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
             recentDiscrepancyValues = []
             var nextDiscrepancy = currentDiscrepancy
             let currentDiscrepancySign = currentDiscrepancy.quantity.doubleValue(for: unit).sign
+            // Low-memory carry: when the current run is POSITIVE (a rebound) and
+            // lowMemoryScale > 0, after the positive run we continue back through the
+            // immediately-preceding NEGATIVE run (the low) rather than resetting at
+            // the sign flip — so the low's memory carries into the rebound and offsets
+            // its upward push. One-sided (only +run carries a preceding -run).
+            let carryLowMemory = lowMemoryScale > 0 && currentDiscrepancySign == FloatingPointSign.plus
+            var inCarryPhase = false
             for pastDiscrepancy in pastDiscrepancies.reversed() {
                 let pastDiscrepancyValue = pastDiscrepancy.quantity.doubleValue(for: unit)
-                if (pastDiscrepancyValue.sign == currentDiscrepancySign &&
-                    nextDiscrepancy.endDate.timeIntervalSince(pastDiscrepancy.endDate)
-                    <= recencyInterval && abs(pastDiscrepancyValue) >= 0.1)
-                {
-                    recentDiscrepancyValues.append(pastDiscrepancyValue)
-                    nextDiscrepancy = pastDiscrepancy
+                guard nextDiscrepancy.endDate.timeIntervalSince(pastDiscrepancy.endDate) <= recencyInterval,
+                      abs(pastDiscrepancyValue) >= 0.1 else { break }
+                if !inCarryPhase {
+                    if pastDiscrepancyValue.sign == currentDiscrepancySign {
+                        recentDiscrepancyValues.append(pastDiscrepancyValue)
+                        nextDiscrepancy = pastDiscrepancy
+                    } else if carryLowMemory && pastDiscrepancyValue.sign == FloatingPointSign.minus {
+                        inCarryPhase = true   // sign flipped (+ -> -): begin remembering the low
+                        recentDiscrepancyValues.append(pastDiscrepancyValue * lowMemoryScale)
+                        nextDiscrepancy = pastDiscrepancy
+                    } else {
+                        break
+                    }
                 } else {
-                    break
+                    // In carry phase: keep collecting the contiguous negative (low) run; stop when it ends.
+                    if pastDiscrepancyValue.sign == FloatingPointSign.minus {
+                        recentDiscrepancyValues.append(pastDiscrepancyValue * lowMemoryScale)
+                        nextDiscrepancy = pastDiscrepancy
+                    } else {
+                        break
+                    }
                 }
             }
             recentDiscrepancyValues = recentDiscrepancyValues.reversed()
