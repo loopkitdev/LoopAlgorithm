@@ -149,25 +149,32 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
             // the sign flip — so the low's memory carries into the rebound and offsets
             // its upward push. One-sided (only +run carries a preceding -run).
             let carryLowMemory = lowMemoryScale > 0 && currentDiscrepancySign == FloatingPointSign.plus
+            // The low's memory should survive a CGM gap: the positive rebound run keeps
+            // the normal recencyInterval hole-tolerance (don't over-extend gappy non-low
+            // rebounds), but reaching back INTO the low (and collecting it) may bridge any
+            // gap within the retrospection window — a sensor dropout during the low must
+            // not erase it. integralForget still down-weights an older low naturally.
+            let carryGapTolerance = Self.retrospectionInterval
             var inCarryPhase = false
             for pastDiscrepancy in pastDiscrepancies.reversed() {
                 let pastDiscrepancyValue = pastDiscrepancy.quantity.doubleValue(for: unit)
-                guard nextDiscrepancy.endDate.timeIntervalSince(pastDiscrepancy.endDate) <= recencyInterval,
-                      abs(pastDiscrepancyValue) >= 0.1 else { break }
+                guard abs(pastDiscrepancyValue) >= 0.1 else { break }
+                let gap = nextDiscrepancy.endDate.timeIntervalSince(pastDiscrepancy.endDate)
                 if !inCarryPhase {
                     if pastDiscrepancyValue.sign == currentDiscrepancySign {
+                        guard gap <= recencyInterval else { break }   // rebound run: normal hole-tolerance
                         recentDiscrepancyValues.append(pastDiscrepancyValue)
                         nextDiscrepancy = pastDiscrepancy
-                    } else if carryLowMemory && pastDiscrepancyValue.sign == FloatingPointSign.minus {
-                        inCarryPhase = true   // sign flipped (+ -> -): begin remembering the low
+                    } else if carryLowMemory && pastDiscrepancyValue.sign == FloatingPointSign.minus && gap <= carryGapTolerance {
+                        inCarryPhase = true   // sign flipped (+ -> -): begin remembering the low, bridging any gap
                         recentDiscrepancyValues.append(pastDiscrepancyValue * lowMemoryScale)
                         nextDiscrepancy = pastDiscrepancy
                     } else {
                         break
                     }
                 } else {
-                    // In carry phase: keep collecting the contiguous negative (low) run; stop when it ends.
-                    if pastDiscrepancyValue.sign == FloatingPointSign.minus {
+                    // In carry phase: keep collecting the negative (low) run, bridging gaps; stop when it ends.
+                    if pastDiscrepancyValue.sign == FloatingPointSign.minus && gap <= carryGapTolerance {
                         recentDiscrepancyValues.append(pastDiscrepancyValue * lowMemoryScale)
                         nextDiscrepancy = pastDiscrepancy
                     } else {
