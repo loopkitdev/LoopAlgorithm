@@ -209,6 +209,17 @@ public struct LoopAlgorithm {
         ircDropGainScale: Double = 1.0,
         ircRiseGainScale: Double = 1.0,
         ircLowMemoryScale: Double = 0.0,
+        // UAM projection: treat recent unexplained glucose appearance (ICE - modeled carbs)
+        // as ongoing absorption, projected forward with a linear taper over this many
+        // minutes. 0 = off. Continuous mechanism for unannounced meals.
+        uamProjectionMinutes: Double = 0,
+        // Early-ascending-limb projection (continuous complement of GBAF). Active only when
+        // earlyRiseGain > 0 AND earlyRiseMinutes > 0. See earlyRiseProjectionEffects.
+        earlyRiseMinutes: Double = 0,
+        earlyRiseGain: Double = 0,
+        earlyRiseBgLow: Double = 70,
+        earlyRiseBgHigh: Double = 140,
+        earlyRiseSlopeThreshold: Double = 0.3,
         includingPositiveVelocityAndRC: Bool = true,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
@@ -320,6 +331,30 @@ public struct LoopAlgorithm {
 
             if algorithmEffectsOptions.contains(.insulin) {
                 effects.append(insulinEffects)
+            }
+
+            // UAM projection: observed unexplained glucose appearance (ICE minus modeled
+            // carbs) is treated as ongoing absorption that continues and tapers — a
+            // continuous, biological forecast term for unannounced meals.
+            if uamProjectionMinutes > 0 {
+                let uam = uamProjectionEffects(
+                    discrepancies: retrospectiveGlucoseDiscrepancies,
+                    start: start,
+                    projectionDuration: .minutes(uamProjectionMinutes))
+                if !uam.isEmpty { effects.append(uam) }
+            }
+
+            // Early-ascending-limb projection (continuous complement of GBAF).
+            if earlyRiseGain > 0, earlyRiseMinutes > 0 {
+                let er = earlyRiseProjectionEffects(
+                    glucoseHistory: glucoseHistory,
+                    start: start,
+                    projectionDuration: .minutes(earlyRiseMinutes),
+                    gain: earlyRiseGain,
+                    bgLow: earlyRiseBgLow,
+                    bgHigh: earlyRiseBgHigh,
+                    slopeThreshold: earlyRiseSlopeThreshold)
+                if !er.isEmpty { effects.append(er) }
             }
 
             if algorithmEffectsOptions.contains(.retrospection) {
@@ -451,6 +486,17 @@ public struct LoopAlgorithm {
         ircDropGainScale: Double = 1.0,
         ircRiseGainScale: Double = 1.0,
         ircLowMemoryScale: Double = 0.0,
+        // UAM projection: treat recent unexplained glucose appearance (ICE - modeled carbs)
+        // as ongoing absorption, projected forward with a linear taper over this many
+        // minutes. 0 = off. Continuous mechanism for unannounced meals.
+        uamProjectionMinutes: Double = 0,
+        // Early-ascending-limb projection (continuous complement of GBAF). Active only when
+        // earlyRiseGain > 0 AND earlyRiseMinutes > 0. See earlyRiseProjectionEffects.
+        earlyRiseMinutes: Double = 0,
+        earlyRiseGain: Double = 0,
+        earlyRiseBgLow: Double = 70,
+        earlyRiseBgHigh: Double = 140,
+        earlyRiseSlopeThreshold: Double = 0.3,
         includingPositiveVelocityAndRC: Bool = true,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
@@ -541,6 +587,26 @@ public struct LoopAlgorithm {
             var effects = [[GlucoseEffect]]()
             if algorithmEffectsOptions.contains(.carbs)  { effects.append(carbEffects) }
             if algorithmEffectsOptions.contains(.insulin) { effects.append(insulinEffects) }
+            if uamProjectionMinutes > 0 {
+                let uam = uamProjectionEffects(
+                    discrepancies: retrospectiveGlucoseDiscrepancies,
+                    start: start,
+                    projectionDuration: .minutes(uamProjectionMinutes))
+                if !uam.isEmpty { effects.append(uam) }
+            }
+
+            // Early-ascending-limb projection (continuous complement of GBAF).
+            if earlyRiseGain > 0, earlyRiseMinutes > 0 {
+                let er = earlyRiseProjectionEffects(
+                    glucoseHistory: glucoseHistory,
+                    start: start,
+                    projectionDuration: .minutes(earlyRiseMinutes),
+                    gain: earlyRiseGain,
+                    bgLow: earlyRiseBgLow,
+                    bgHigh: earlyRiseBgHigh,
+                    slopeThreshold: earlyRiseSlopeThreshold)
+                if !er.isEmpty { effects.append(er) }
+            }
 
             if algorithmEffectsOptions.contains(.retrospection) {
                 var useRC = true
@@ -678,6 +744,107 @@ public struct LoopAlgorithm {
     }
 
     // Computes a bolus or low-temp basal dose to correct the given prediction
+    /// Project recent unexplained glucose appearance forward as ongoing, tapering
+    /// absorption (a continuous UAM term). Rate = mean discrepancy velocity over the
+    /// last `lookback`; cumulative effect c(t) = R*(t - t^2/2T) up to T, then R*T/2.
+    static func uamProjectionEffects(
+        discrepancies: [GlucoseEffect],          // per-5-min unexplained change (mg/dL per interval)
+        start: Date,
+        projectionDuration: TimeInterval,
+        lookback: TimeInterval = .minutes(30),
+        delta: TimeInterval = .minutes(5)
+    ) -> [GlucoseEffect] {
+        let unit = LoopUnit.milligramsPerDeciliter
+        // Slow-on / fast-off rate estimate: trust a rise only when the LONG (30 min) mean
+        // supports it, but shed it as fast as the SHORT (10 min) mean falls when
+        // absorption wanes — rate = max(0, min(mean_long, mean_short)). Continuous.
+        func meanRate(_ lb: TimeInterval) -> Double {
+            let recent = discrepancies.filter { $0.startDate > start.addingTimeInterval(-lb) && $0.startDate <= start }
+            guard !recent.isEmpty else { return 0 }
+            let perInterval = recent.reduce(0.0) { $0 + $1.quantity.doubleValue(for: unit) } / Double(recent.count)
+            return perInterval / (delta / 60.0)                      // mg/dL per minute
+        }
+        guard projectionDuration > 0 else { return [] }
+        let rate = Swift.max(0, Swift.min(meanRate(lookback), meanRate(.minutes(10))))
+        guard rate > 0 else { return [] }
+        let T = projectionDuration / 60.0        // minutes
+        let horizonMin = Swift.max(T, 360.0)
+        var effects: [GlucoseEffect] = []
+        var tau = 0.0
+        while tau <= horizonMin {
+            let c: Double = tau <= T ? rate * (tau - tau * tau / (2 * T)) : rate * T / 2
+            effects.append(GlucoseEffect(startDate: start.addingTimeInterval(tau * 60),
+                                         quantity: LoopQuantity(unit: unit, doubleValue: c)))
+            tau += delta / 60.0
+        }
+        return effects
+    }
+
+    /// Early-ascending-limb forecast term — the continuous complement of GBAF.
+    /// When BG sits in the low-normal band AND is rising, project the current rise forward as
+    /// a tapering, meal-shaped glucose effect, so the EXISTING dosing logic starts covering an
+    /// unannounced meal on its ASCENDING LIMB rather than waiting for the peak. Empirically this
+    /// is the single thing oref does that Loop does not (head-to-head: oref doses the 70-100
+    /// rising state where Loop suspends; equal total insulin, front-loaded onto the rise).
+    ///
+    /// Keyed on (low-normal level) × (positive slope):
+    ///  - a smooth BG band-gate is ≈1 over [bgLow+ramp, bgHigh-ramp] and ramps linearly to 0 at
+    ///    the edges, so the term is OFF at high BG (never piles onto the peak — the failure mode
+    ///    of a uniform UAM/RC term, which only slides the aggressiveness curve) and OFF below
+    ///    bgLow (never pushes the forecast up when already near a low);
+    ///  - the slope gate is zero at/below `slopeThreshold`, so it never fires while flat or
+    ///    falling (no dosing into a stall, and no dosing into a post-low rebound's reversal).
+    /// Cumulative shape matches the UAM term: c(τ)=R·(τ−τ²/2T) up to T, then R·T/2 — a
+    /// decelerating ramp to a bounded plateau. All forecast-side (raises predicted BG only).
+    static func earlyRiseProjectionEffects<GlucoseType: GlucoseSampleValue>(
+        glucoseHistory: [GlucoseType],
+        start: Date,
+        projectionDuration: TimeInterval,
+        gain: Double,
+        bgLow: Double,
+        bgHigh: Double,
+        bandRamp: Double = 15.0,
+        slopeThreshold: Double = 0.3,
+        velocityInterval: TimeInterval = .minutes(15),
+        delta: TimeInterval = .minutes(5)
+    ) -> [GlucoseEffect] {
+        let unit = LoopUnit.milligramsPerDeciliter
+        guard gain > 0, projectionDuration > 0 else { return [] }
+        let win = glucoseHistory.filter { $0.startDate > start.addingTimeInterval(-velocityInterval) && $0.startDate <= start }
+        guard let latest = win.last, win.count >= 2 else { return [] }
+        let bgNow = latest.quantity.doubleValue(for: unit)
+        // BG band gate: smooth (piecewise-linear) window, 1 inside, ramps to 0 at the edges.
+        let up   = Swift.max(0, Swift.min(1, (bgNow - bgLow)  / bandRamp))
+        let down = Swift.max(0, Swift.min(1, (bgHigh - bgNow) / bandRamp))
+        let bandGate = up * down
+        guard bandGate > 0 else { return [] }
+        // Least-squares BG slope over the trailing window (mg/dL per minute).
+        let t0 = win.first!.startDate
+        var sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0; let n = Double(win.count)
+        for g in win {
+            let x = g.startDate.timeIntervalSince(t0) / 60.0
+            let y = g.quantity.doubleValue(for: unit)
+            sx += x; sy += y; sxx += x * x; sxy += x * y
+        }
+        let denom = n * sxx - sx * sx
+        guard denom != 0 else { return [] }
+        let slope = (n * sxy - sx * sy) / denom
+        // Projected ongoing appearance rate (mg/dL per minute) — positive only.
+        let rate = gain * bandGate * Swift.max(0, slope - slopeThreshold)
+        guard rate > 0 else { return [] }
+        let T = projectionDuration / 60.0
+        let horizonMin = Swift.max(T, 360.0)
+        var effects: [GlucoseEffect] = []
+        var tau = 0.0
+        while tau <= horizonMin {
+            let c: Double = tau <= T ? rate * (tau - tau * tau / (2 * T)) : rate * T / 2
+            effects.append(GlucoseEffect(startDate: start.addingTimeInterval(tau * 60),
+                                         quantity: LoopQuantity(unit: unit, doubleValue: c)))
+            tau += delta / 60.0
+        }
+        return effects
+    }
+
     public static func recommendAutomaticDose(
         for correction: InsulinCorrection,
         applicationFactor: Double,
@@ -685,18 +852,35 @@ public struct LoopAlgorithm {
         activeInsulin: Double,
         maxBolus: Double,
         maxBasalRate: Double,
-        maxActiveInsulin: Double
+        maxActiveInsulin: Double,
+        // When non-nil, the hard "predicted-min < range-floor → zero bolus" cliff is
+        // replaced by a graded ramp: the bolus is scaled by how far the predicted
+        // minimum sits between this floor (e.g. the suspend threshold) and the
+        // correction-range lower bound — full at/above the range floor, zero at/below
+        // this floor, linear between. nil = original on/off gate.
+        lowGateRampFloor: Double? = nil
     ) -> AutomaticDoseRecommendation {
 
 
         let deliveryHeadroom = max(0, maxActiveInsulin - activeInsulin)
 
-        var deliveryMax = min(maxBolus * applicationFactor, deliveryHeadroom)
+        let deliveryMax = min(maxBolus * applicationFactor, deliveryHeadroom)
 
+        var effectiveApplicationFactor = applicationFactor
         if case .aboveRange(min: let min, correcting: _, minTarget: let minTarget, units: _) = correction,
             min.quantity < minTarget
         {
-            deliveryMax = 0
+            if let rampFloor = lowGateRampFloor {
+                let unit = LoopUnit.milligramsPerDeciliter
+                let minVal = min.quantity.doubleValue(for: unit)
+                let floorTarget = minTarget.doubleValue(for: unit)
+                let frac = floorTarget > rampFloor
+                    ? Swift.max(0, Swift.min(1, (minVal - rampFloor) / (floorTarget - rampFloor)))
+                    : 0
+                effectiveApplicationFactor *= frac
+            } else {
+                effectiveApplicationFactor = 0   // original hard gate (bolus = units × 0 = 0)
+            }
         }
 
         let temp: TempBasalRecommendation = correction.asTempBasal(
@@ -706,10 +890,10 @@ public struct LoopAlgorithm {
         )
 
         let bolusUnits = correction.asPartialBolus(
-            partialApplicationFactor: applicationFactor,
+            partialApplicationFactor: effectiveApplicationFactor,
             maxBolusUnits: deliveryMax
         )
-        
+
         return AutomaticDoseRecommendation(basalAdjustment: temp, direction: .from(correction: correction), bolusUnits: bolusUnits)
     }
 
