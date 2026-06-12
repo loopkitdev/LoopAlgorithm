@@ -209,6 +209,8 @@ public struct LoopAlgorithm {
         ircDropGainScale: Double = 1.0,
         ircRiseGainScale: Double = 1.0,
         ircLowMemoryScale: Double = 0.0,
+        ircDropDurationScale: Double = 1.0,
+        ircRiseDurationScale: Double = 1.0,
         // UAM projection: treat recent unexplained glucose appearance (ICE - modeled carbs)
         // as ongoing absorption, projected forward with a linear taper over this many
         // minutes. 0 = off. Continuous mechanism for unannounced meals.
@@ -308,7 +310,7 @@ public struct LoopAlgorithm {
         let rc: RetrospectiveCorrection
 
         if useIntegralRetrospectiveCorrection {
-            rc = IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale)
+            rc = IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale)
         } else {
             rc = StandardRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
         }
@@ -486,6 +488,8 @@ public struct LoopAlgorithm {
         ircDropGainScale: Double = 1.0,
         ircRiseGainScale: Double = 1.0,
         ircLowMemoryScale: Double = 0.0,
+        ircDropDurationScale: Double = 1.0,
+        ircRiseDurationScale: Double = 1.0,
         // UAM projection: treat recent unexplained glucose appearance (ICE - modeled carbs)
         // as ongoing absorption, projected forward with a linear taper over this many
         // minutes. 0 = off. Continuous mechanism for unannounced meals.
@@ -567,7 +571,7 @@ public struct LoopAlgorithm {
             .combinedSums(of: LoopMath.retrospectiveCorrectionGroupingInterval * 1.01)
 
         let rc: RetrospectiveCorrection = useIntegralRetrospectiveCorrection
-            ? IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale)
+            ? IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale)
             : StandardRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
 
         var prediction: [PredictedGlucoseValue] = []

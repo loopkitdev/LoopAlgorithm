@@ -37,6 +37,15 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
     /// One-sided: a positive run is never carried into a drop. 0 == off
     /// (standard sign-contiguous reset). Typical: 0.5–1.0.
     let lowMemoryScale: Double
+    /// Asymmetric PERSISTENCE ("remember the low longer than the high"). Scales how
+    /// long the correction lingers in the forecast by the sign of the current
+    /// discrepancy run. `dropDurationScale` > 1 makes a NEGATIVE-discrepancy
+    /// (sensitivity) correction turn off SLOWLY / persist; `riseDurationScale` < 1
+    /// makes a POSITIVE-discrepancy (resistance) correction turn off FAST. The total
+    /// correction magnitude is preserved (area-normalized) — only its temporal shape
+    /// changes. Defaults 1.0/1.0 reduce to standard IRC.
+    let dropDurationScale: Double
+    let riseDurationScale: Double
     /// Overall retrospective correction effect
     public var totalGlucoseCorrectionEffect: LoopQuantity?
     
@@ -91,11 +100,14 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
     public init(effectDuration: TimeInterval,
                 dropGainScale: Double = 1.0, riseGainScale: Double = 1.0,
                 lowMemoryScale: Double = 0.0,
+                dropDurationScale: Double = 1.0, riseDurationScale: Double = 1.0,
                 maxCorrectionVelocity: LoopQuantity? = IntegralRetrospectiveCorrection.defaultMaxCorrectionVelocity) {
         self.effectDuration = effectDuration
         self.dropGainScale = dropGainScale
         self.riseGainScale = riseGainScale
         self.lowMemoryScale = lowMemoryScale
+        self.dropDurationScale = dropDurationScale
+        self.riseDurationScale = riseDurationScale
         self.maxCorrectionVelocity = maxCorrectionVelocity
     }
     
@@ -193,8 +205,16 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
                     IntegralRetrospectiveCorrection.integralGain * discrepancy
                 integralCorrectionEffectMinutes += 2.0 * IntegralRetrospectiveCorrection.delta.minutes
             }
-            // Limit effect duration
-            integralCorrectionEffectMinutes = min(integralCorrectionEffectMinutes, IntegralRetrospectiveCorrection.maximumCorrectionEffectDuration.minutes)
+            // Asymmetric persistence: stretch/shrink how long the correction lingers
+            // in the forecast by the sign of the discrepancy run. dropDurationScale > 1
+            // makes a negative-discrepancy (sensitivity) correction "turn off slow /
+            // persist"; riseDurationScale < 1 makes a positive-discrepancy (resistance)
+            // correction turn off fast. (Magnitude is preserved by the area-normalization
+            // at `scaledCorrection` below — only the temporal shape changes.)
+            let durationScale = currentDiscrepancyValue < 0 ? dropDurationScale : riseDurationScale
+            integralCorrectionEffectMinutes *= durationScale
+            // Limit effect duration (cap scales with the drop side so persistence isn't clipped)
+            integralCorrectionEffectMinutes = min(integralCorrectionEffectMinutes, IntegralRetrospectiveCorrection.maximumCorrectionEffectDuration.minutes * Swift.max(1.0, durationScale))
             
             // Differential effect math
             var differentialDiscrepancy: Double = 0.0
