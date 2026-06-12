@@ -858,7 +858,13 @@ public struct LoopAlgorithm {
         // minimum sits between this floor (e.g. the suspend threshold) and the
         // correction-range lower bound — full at/above the range floor, zero at/below
         // this floor, linear between. nil = original on/off gate.
-        lowGateRampFloor: Double? = nil
+        lowGateRampFloor: Double? = nil,
+        // Predicted-min cutoff (mg/dL) below which the auto-bolus gate engages. nil = the
+        // correction-range floor (original behavior). A lower value (e.g. 80) keeps the FULL
+        // application factor for predicted minimums down to that level before gating — i.e.
+        // "continue the application factor down to <gateThreshold>". Composes with lowGateRampFloor:
+        // when both are set, the bolus ramps from rampFloor (0) up to gateThreshold (full).
+        gateThreshold: Double? = nil
     ) -> AutomaticDoseRecommendation {
 
 
@@ -867,19 +873,21 @@ public struct LoopAlgorithm {
         let deliveryMax = min(maxBolus * applicationFactor, deliveryHeadroom)
 
         var effectiveApplicationFactor = applicationFactor
-        if case .aboveRange(min: let min, correcting: _, minTarget: let minTarget, units: _) = correction,
-            min.quantity < minTarget
-        {
-            if let rampFloor = lowGateRampFloor {
-                let unit = LoopUnit.milligramsPerDeciliter
-                let minVal = min.quantity.doubleValue(for: unit)
-                let floorTarget = minTarget.doubleValue(for: unit)
-                let frac = floorTarget > rampFloor
-                    ? Swift.max(0, Swift.min(1, (minVal - rampFloor) / (floorTarget - rampFloor)))
-                    : 0
-                effectiveApplicationFactor *= frac
-            } else {
-                effectiveApplicationFactor = 0   // original hard gate (bolus = units × 0 = 0)
+        if case .aboveRange(min: let min, correcting: _, minTarget: let minTarget, units: _) = correction {
+            let unit = LoopUnit.milligramsPerDeciliter
+            let minVal = min.quantity.doubleValue(for: unit)
+            // The predicted-min value below which the gate engages. Defaults to the correction-range
+            // floor (minTarget) — identical to the original behavior when gateThreshold is nil.
+            let gateTop = gateThreshold ?? minTarget.doubleValue(for: unit)
+            if minVal < gateTop {
+                if let rampFloor = lowGateRampFloor {
+                    let frac = gateTop > rampFloor
+                        ? Swift.max(0, Swift.min(1, (minVal - rampFloor) / (gateTop - rampFloor)))
+                        : 0
+                    effectiveApplicationFactor *= frac
+                } else {
+                    effectiveApplicationFactor = 0   // hard gate below the threshold
+                }
             }
         }
 
