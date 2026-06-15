@@ -104,21 +104,30 @@ extension BidirectionalCollection where Element: GlucoseSampleValue, Index == In
     /// Calculates the short-term predicted momentum effect using linear regression
     ///
     /// - Parameters:
-    ///   - duration: The duration of the effects
+    ///   - duration: The projection duration of the momentum effect. Default
+    ///     `GlucoseMath.momentumDuration` (15 min, the LoopAlgorithm value). Loop
+    ///     3.9.3 / classic LoopKit used 30 min — pass `30 * 60` to match.
     ///   - delta: The time differential for the returned values
-    ///   - velocityMaximum: The limit on how fast the momentum effect can be. Defaults to 4 mg/dL/min based on physiological rates, if nil passed.
+    ///   - velocityMaximum: The limit on how fast the momentum effect can rise.
+    ///     Defaults to 4 mg/dL/min (physiological cap, added LoopKit #262, 2020) if
+    ///     nil. Pass a very large value to effectively disable the cap.
+    ///   - gradualTransitionsThreshold: When non-nil (default 40 mg/dL), momentum is
+    ///     suppressed if any two consecutive readings differ by more than this (the
+    ///     `hasGradualTransitions` gate — a LoopAlgorithm addition NOT present in
+    ///     classic LoopKit / Loop 3.9.3). Pass nil to disable the gate (3.9.3 behavior).
     /// - Returns: An array of glucose effects
     public func linearMomentumEffect(
         duration: TimeInterval = GlucoseMath.momentumDuration,
         delta: TimeInterval = GlucoseMath.defaultDelta,
-        velocityMaximum: LoopQuantity? = nil
+        velocityMaximum: LoopQuantity? = nil,
+        gradualTransitionsThreshold: Double? = 40.0
     ) -> [GlucoseEffect] {
 
         let velocityMax = velocityMaximum ?? LoopQuantity(unit: .milligramsPerDeciliterPerMinute, doubleValue: 4.0)
 
         guard
             self.count > 2,  // Linear regression isn't much use without 3 or more entries.
-            hasGradualTransitions() && isContinuous() && !containsCalibrations() && hasSingleProvenance,
+            (gradualTransitionsThreshold.map { hasGradualTransitions(gradualTransitionThreshold: $0) } ?? true) && isContinuous() && !containsCalibrations() && hasSingleProvenance,
             let firstSample = self.first,
             let lastSample = self.last,
             let (startDate, endDate) = LoopMath.simulationDateRangeForSamples([lastSample], duration: duration, delta: delta)

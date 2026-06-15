@@ -227,6 +227,7 @@ public struct LoopAlgorithm {
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         gradualTransitionsThreshold: Double? = 40.0,
         momentumVelocityMaximum: LoopQuantity? = nil,
+        momentumProjectionDuration: TimeInterval? = nil,
         useAsymmetricMomentum: Bool = false,
         useHybridAsymmetricMomentum: Bool = false,
         momentumAlphaSlow: Double = 0.15,
@@ -395,7 +396,10 @@ public struct LoopAlgorithm {
                 } else if useAsymmetricMomentum {
                     momentumEffects = momentumInputData.asymmetricMomentumEffect(velocityMaximum: momentumVelocityMaximum, alphaSlow: momentumAlphaSlow, alphaFast: momentumAlphaFast)
                 } else {
-                    momentumEffects = momentumInputData.linearMomentumEffect(velocityMaximum: momentumVelocityMaximum)
+                    momentumEffects = momentumInputData.linearMomentumEffect(
+                        duration: momentumProjectionDuration ?? GlucoseMath.momentumDuration,
+                        velocityMaximum: momentumVelocityMaximum,
+                        gradualTransitionsThreshold: gradualTransitionsThreshold)
                 }
                 if !includingPositiveVelocityAndRC, let netMomentum = momentumEffects.netEffect(), netMomentum.quantity.doubleValue(for: .milligramsPerDeciliter) > 0 {
                     // positive momentum is turned off
@@ -506,6 +510,7 @@ public struct LoopAlgorithm {
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         gradualTransitionsThreshold: Double? = 40.0,
         momentumVelocityMaximum: LoopQuantity? = nil,
+        momentumProjectionDuration: TimeInterval? = nil,
         useAsymmetricMomentum: Bool = false,
         useHybridAsymmetricMomentum: Bool = false,
         momentumAlphaSlow: Double = 0.15,
@@ -639,7 +644,10 @@ public struct LoopAlgorithm {
                 } else if useAsymmetricMomentum {
                     momentumEffects = momentumInputData.asymmetricMomentumEffect(velocityMaximum: momentumVelocityMaximum, alphaSlow: momentumAlphaSlow, alphaFast: momentumAlphaFast)
                 } else {
-                    momentumEffects = momentumInputData.linearMomentumEffect(velocityMaximum: momentumVelocityMaximum)
+                    momentumEffects = momentumInputData.linearMomentumEffect(
+                        duration: momentumProjectionDuration ?? GlucoseMath.momentumDuration,
+                        velocityMaximum: momentumVelocityMaximum,
+                        gradualTransitionsThreshold: gradualTransitionsThreshold)
                 }
                 if !includingPositiveVelocityAndRC,
                    let netMomentum = momentumEffects.netEffect(),
