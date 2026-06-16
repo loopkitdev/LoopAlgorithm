@@ -225,6 +225,8 @@ public struct LoopAlgorithm {
         includingPositiveVelocityAndRC: Bool = true,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
+        adaptiveCarbAbsorption: Bool = false,
+        initialAbsorptionTimeOverrun: Double = CarbMath.defaultAbsorptionTimeOverrun,
         gradualTransitionsThreshold: Double? = 40.0,
         momentumVelocityMaximum: LoopQuantity? = nil,
         momentumProjectionDuration: TimeInterval? = nil,
@@ -292,7 +294,10 @@ public struct LoopAlgorithm {
         let carbStatus = carbEntries.map(
             to: insulinCounteractionEffects,
             carbRatio: carbRatio,
-            insulinSensitivity: sensitivity
+            insulinSensitivity: sensitivity,
+            initialAbsorptionTimeOverrun: initialAbsorptionTimeOverrun,
+            absorptionModel: carbAbsorptionModel,
+            adaptiveAbsorptionRateEnabled: adaptiveCarbAbsorption
         )
 
         carbEffects = carbStatus.dynamicGlucoseEffects(
@@ -508,6 +513,8 @@ public struct LoopAlgorithm {
         includingPositiveVelocityAndRC: Bool = true,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
+        adaptiveCarbAbsorption: Bool = false,
+        initialAbsorptionTimeOverrun: Double = CarbMath.defaultAbsorptionTimeOverrun,
         gradualTransitionsThreshold: Double? = 40.0,
         momentumVelocityMaximum: LoopQuantity? = nil,
         momentumProjectionDuration: TimeInterval? = nil,
@@ -561,7 +568,10 @@ public struct LoopAlgorithm {
         let carbStatus = carbEntries.map(
             to: insulinCounteractionEffects,
             carbRatio: carbRatio,
-            insulinSensitivity: sensitivity
+            insulinSensitivity: sensitivity,
+            initialAbsorptionTimeOverrun: initialAbsorptionTimeOverrun,
+            absorptionModel: carbAbsorptionModel,
+            adaptiveAbsorptionRateEnabled: adaptiveCarbAbsorption
         )
         let carbEffects = carbStatus.dynamicGlucoseEffects(
             from: start.addingTimeInterval(-IntegralRetrospectiveCorrection.retrospectionInterval),
