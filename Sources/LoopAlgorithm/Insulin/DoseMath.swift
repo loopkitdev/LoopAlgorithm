@@ -193,10 +193,6 @@ extension Array where Element: GlucoseValue {
 
         let endOfAbsorption = date.addingTimeInterval(model.effectDuration)
 
-        guard let correctionRangeItem = correctionRange.closestPrior(to: date) else {
-            preconditionFailure("Correction range must cover date: \(date)")
-        }
-
         // For each prediction above target, determine the amount of insulin necessary to correct glucose based on the modeled effectiveness of the insulin at that time
         for prediction in self {
             guard prediction.startDate >= date else {
@@ -212,6 +208,15 @@ extension Array where Element: GlucoseValue {
 
             let predictedGlucoseValue = prediction.quantity.doubleValue(for: unit)
             let time = prediction.startDate.timeIntervalSince(date)
+
+            // Sample the correction range at THIS prediction point's time (matches LoopKit
+            // DoseMath `correctionRange.quantityRange(at: prediction.startDate)`), so a
+            // forecast that crosses a target-band boundary uses the band in effect at each
+            // point. (Was: sampled once at `date`/now, which mis-targeted points after a
+            // band change — e.g. evening 100 vs overnight 110.)
+            guard let correctionRangeItem = correctionRange.closestPrior(to: prediction.startDate) else {
+                preconditionFailure("Correction range must cover prediction: \(prediction.startDate)")
+            }
 
             // Compute the target value as a function of time since the dose started
             let targetValue = targetGlucoseValue(
