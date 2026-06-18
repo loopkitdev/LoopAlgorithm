@@ -376,7 +376,7 @@ public struct LoopAlgorithm {
                     start
                 )   
 
-                if !rcTransitionData.hasGradualTransitions(gradualTransitionThreshold: gradualTransitionsThreshold ?? 40.0) {
+                if let _gtt = gradualTransitionsThreshold, !rcTransitionData.hasGradualTransitions(gradualTransitionThreshold: _gtt) {
                     useRC = false
                 }
 
@@ -633,7 +633,7 @@ public struct LoopAlgorithm {
                     start.addingTimeInterval(-LoopMath.retrospectiveCorrectionGroupingInterval),
                     start
                 )
-                if !rcTransitionData.hasGradualTransitions(gradualTransitionThreshold: gradualTransitionsThreshold ?? 40.0) {
+                if let _gtt = gradualTransitionsThreshold, !rcTransitionData.hasGradualTransitions(gradualTransitionThreshold: _gtt) {
                     useRC = false
                 }
                 if !includingPositiveVelocityAndRC,
