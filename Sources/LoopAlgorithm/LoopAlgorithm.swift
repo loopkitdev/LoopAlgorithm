@@ -202,6 +202,9 @@ public struct LoopAlgorithm {
         // `scheduleBaselineSensitivity` differs from `sensitivity`.
         sensitivityDecomposition: SensitivityDecomposition = .netBasalUnits,
         carbRatio: [AbsoluteScheduleValue<Double>],
+        // Correction-range timeline — used only to clamp the IntegralRC integral
+        // term (deployed-LoopKit safety bound). nil ⇒ IRC clamp skipped (legacy).
+        target: GlucoseRangeTimeline? = nil,
         algorithmEffectsOptions: AlgorithmEffectsOptions = .all,
         useIntegralRetrospectiveCorrection: Bool = false,
         // Asymmetric IRC gains (only used when useIntegralRetrospectiveCorrection
@@ -322,10 +325,18 @@ public struct LoopAlgorithm {
         }
 
         if let latestGlucose = glucoseHistory.last {
+            // Inputs for the IntegralRC integral-correction clamp (deployed-LoopKit
+            // safety bound). nil target ⇒ clamp skipped (legacy unclamped behavior).
+            let clampISF = sensitivity.closestPrior(to: start)?.value
+            let clampBasal = basal.closestPrior(to: start)?.value
+            let clampRange = target?.closestPrior(to: start)?.value
             retrospectiveCorrectionEffects = rc.computeEffect(
                 startingAt: latestGlucose,
                 retrospectiveGlucoseDiscrepanciesSummed: retrospectiveGlucoseDiscrepanciesSummed,
                 recencyInterval: TimeInterval(minutes: 15),
+                insulinSensitivity: clampISF,
+                basalRate: clampBasal,
+                correctionRange: clampRange,
                 retrospectiveCorrectionGroupingInterval: LoopMath.retrospectiveCorrectionGroupingInterval
             )
 
@@ -490,6 +501,13 @@ public struct LoopAlgorithm {
         carbEntries: [CarbType],
         sensitivity: [AbsoluteScheduleValue<LoopQuantity>],
         carbRatio: [AbsoluteScheduleValue<Double>],
+        // Correction-range timeline + scheduled basal rate — used only to clamp the
+        // IntegralRC integral term (deployed-LoopKit safety bound). nil target ⇒
+        // IRC clamp skipped (legacy unclamped behavior). This overload has no basal
+        // schedule (insulin is precomputed), so the scheduled basal rate at the
+        // prediction start must be supplied separately.
+        target: GlucoseRangeTimeline? = nil,
+        scheduledBasalRate: Double? = nil,
         algorithmEffectsOptions: AlgorithmEffectsOptions = .all,
         useIntegralRetrospectiveCorrection: Bool = false,
         // Asymmetric IRC gains (only used when useIntegralRetrospectiveCorrection
@@ -595,10 +613,17 @@ public struct LoopAlgorithm {
         var totalRetrospectiveCorrectionEffect: LoopQuantity?
 
         if let latestGlucose = glucoseHistory.last {
+            // Inputs for the IntegralRC integral-correction clamp (deployed-LoopKit
+            // safety bound). nil target ⇒ clamp skipped (legacy unclamped behavior).
+            let clampISF = sensitivity.closestPrior(to: start)?.value
+            let clampRange = target?.closestPrior(to: start)?.value
             retrospectiveCorrectionEffects = rc.computeEffect(
                 startingAt: latestGlucose,
                 retrospectiveGlucoseDiscrepanciesSummed: retrospectiveGlucoseDiscrepanciesSummed,
                 recencyInterval: TimeInterval(minutes: 15),
+                insulinSensitivity: clampISF,
+                basalRate: scheduledBasalRate,
+                correctionRange: clampRange,
                 retrospectiveCorrectionGroupingInterval: LoopMath.retrospectiveCorrectionGroupingInterval
             )
             totalRetrospectiveCorrectionEffect = rc.totalGlucoseCorrectionEffect
@@ -709,6 +734,7 @@ public struct LoopAlgorithm {
             basal: input.basal,
             sensitivity: input.sensitivity,
             carbRatio: input.carbRatio,
+            target: input.target,
             algorithmEffectsOptions: input.algorithmEffectsOptions,
             useIntegralRetrospectiveCorrection: input.useIntegralRetrospectiveCorrection,
             carbAbsorptionModel: input.carbAbsorptionModel.model,

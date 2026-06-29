@@ -26,6 +26,12 @@ public protocol RetrospectiveCorrection {
         startingAt startingGlucose: GlucoseValue,
         retrospectiveGlucoseDiscrepanciesSummed: [GlucoseChange]?,
         recencyInterval: TimeInterval,
+        // Optional inputs for the IntegralRC integral-correction clamp (deployed-
+        // LoopKit safety bound). Ignored by StandardRetrospectiveCorrection. When
+        // nil, IntegralRC skips the clamp (legacy unclamped behavior).
+        insulinSensitivity: LoopQuantity?,
+        basalRate: Double?,
+        correctionRange: ClosedRange<LoopQuantity>?,
         retrospectiveCorrectionGroupingInterval: TimeInterval
     ) -> [GlucoseEffect]
 }
