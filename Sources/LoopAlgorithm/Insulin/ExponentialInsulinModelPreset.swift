@@ -13,6 +13,11 @@ public enum ExponentialInsulinModelPreset: String, Codable {
     case fiasp
     case lyumjev
     case afrezza
+    /// Experiment: physiological LATE peak (90 min, from neg-ICE / clamp studies)
+    /// with the SHORT effective duration (4h, from the fasting-tail metric). Its
+    /// IOB curve nearly matches peak-55/DIA-6 (Loop's fiasp) — used to confirm
+    /// control-equivalence of the physiologically-accurate model.
+    case lateShort90dia4
 }
 
 
@@ -30,6 +35,8 @@ extension ExponentialInsulinModelPreset {
             return .minutes(360)
         case .afrezza:
             return .minutes(300)
+        case .lateShort90dia4:
+            return .minutes(240)
         }
     }
 
@@ -45,6 +52,8 @@ extension ExponentialInsulinModelPreset {
             return .minutes(55)
         case.afrezza:
             return .minutes(29)
+        case .lateShort90dia4:
+            return .minutes(90)
         }
     }
 
@@ -60,9 +69,11 @@ extension ExponentialInsulinModelPreset {
             return .minutes(10)
         case.afrezza:
             return .minutes(10)
+        case .lateShort90dia4:
+            return .minutes(10)
         }
     }
-    
+
     public var model: InsulinModel {
         return ExponentialInsulinModel(actionDuration: actionDuration, peakActivityTime: peakActivity, delay: delay)
     }
