@@ -237,6 +237,9 @@ public struct LoopAlgorithm {
         gradualTransitionsThreshold: Double? = 40.0,
         momentumVelocityMaximum: LoopQuantity? = nil,
         momentumProjectionDuration: TimeInterval? = nil,
+        // Momentum LOOKBACK: glucose history window the momentum slope is fit over.
+        // nil => GlucoseMath.momentumDataInterval (15 min).
+        momentumDataInterval: TimeInterval? = nil,
         useAsymmetricMomentum: Bool = false,
         useHybridAsymmetricMomentum: Bool = false,
         momentumAlphaSlow: Double = 0.15,
@@ -410,7 +413,7 @@ public struct LoopAlgorithm {
             // Glucose Momentum
             var useMomentum: Bool = true
             if algorithmEffectsOptions.contains(.momentum) {
-                let momentumInputData = glucoseHistory.filterDateRange(start.addingTimeInterval(-GlucoseMath.momentumDataInterval), start)
+                let momentumInputData = glucoseHistory.filterDateRange(start.addingTimeInterval(-(momentumDataInterval ?? GlucoseMath.momentumDataInterval)), start)
                 if useHybridAsymmetricMomentum {
                     momentumEffects = momentumInputData.hybridAsymmetricMomentumEffect(velocityMaximum: momentumVelocityMaximum, alphaFast: momentumAlphaFast)
                 } else if useAsymmetricMomentum {
@@ -544,6 +547,9 @@ public struct LoopAlgorithm {
         gradualTransitionsThreshold: Double? = 40.0,
         momentumVelocityMaximum: LoopQuantity? = nil,
         momentumProjectionDuration: TimeInterval? = nil,
+        // Momentum LOOKBACK: glucose history window the momentum slope is fit over.
+        // nil => GlucoseMath.momentumDataInterval (15 min).
+        momentumDataInterval: TimeInterval? = nil,
         useAsymmetricMomentum: Bool = false,
         useHybridAsymmetricMomentum: Bool = false,
         momentumAlphaSlow: Double = 0.15,
@@ -680,7 +686,7 @@ public struct LoopAlgorithm {
             var useMomentum = true
             if algorithmEffectsOptions.contains(.momentum) {
                 let momentumInputData = glucoseHistory.filterDateRange(
-                    start.addingTimeInterval(-GlucoseMath.momentumDataInterval), start
+                    start.addingTimeInterval(-(momentumDataInterval ?? GlucoseMath.momentumDataInterval)), start
                 )
                 if useHybridAsymmetricMomentum {
                     momentumEffects = momentumInputData.hybridAsymmetricMomentumEffect(velocityMaximum: momentumVelocityMaximum, alphaFast: momentumAlphaFast)
