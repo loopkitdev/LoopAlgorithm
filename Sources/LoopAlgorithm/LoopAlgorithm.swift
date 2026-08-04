@@ -214,6 +214,10 @@ public struct LoopAlgorithm {
         ircLowMemoryScale: Double = 0.0,
         ircDropDurationScale: Double = 1.0,
         ircRiseDurationScale: Double = 1.0,
+        // RC integration window (how far back) / effect duration (how far forward).
+        // nil => the deployed static defaults (180 min / 60 min).
+        rcRetrospectionInterval: TimeInterval? = nil,
+        rcEffectDuration: TimeInterval? = nil,
         // UAM projection: treat recent unexplained glucose appearance (ICE - modeled carbs)
         // as ongoing absorption, projected forward with a linear taper over this many
         // minutes. 0 = off. Continuous mechanism for unannounced meals.
@@ -304,7 +308,7 @@ public struct LoopAlgorithm {
         )
 
         carbEffects = carbStatus.dynamicGlucoseEffects(
-            from: start.addingTimeInterval(-IntegralRetrospectiveCorrection.retrospectionInterval),
+            from: start.addingTimeInterval(-(rcRetrospectionInterval ?? IntegralRetrospectiveCorrection.retrospectionInterval)),
             carbRatios: carbRatio,
             insulinSensitivities: sensitivity,
             absorptionModel: carbAbsorptionModel
@@ -319,9 +323,9 @@ public struct LoopAlgorithm {
         let rc: RetrospectiveCorrection
 
         if useIntegralRetrospectiveCorrection {
-            rc = IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale)
+            rc = IntegralRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale, integrationInterval: rcRetrospectionInterval, maxEffectDuration: rcEffectDuration)
         } else {
-            rc = StandardRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
+            rc = StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration)
         }
 
         if let latestGlucose = glucoseHistory.last {
@@ -517,6 +521,10 @@ public struct LoopAlgorithm {
         ircLowMemoryScale: Double = 0.0,
         ircDropDurationScale: Double = 1.0,
         ircRiseDurationScale: Double = 1.0,
+        // RC integration window (how far back) / effect duration (how far forward).
+        // nil => the deployed static defaults (180 min / 60 min).
+        rcRetrospectionInterval: TimeInterval? = nil,
+        rcEffectDuration: TimeInterval? = nil,
         // UAM projection: treat recent unexplained glucose appearance (ICE - modeled carbs)
         // as ongoing absorption, projected forward with a linear taper over this many
         // minutes. 0 = off. Continuous mechanism for unannounced meals.
@@ -592,7 +600,7 @@ public struct LoopAlgorithm {
             adaptiveAbsorptionRateEnabled: adaptiveCarbAbsorption
         )
         let carbEffects = carbStatus.dynamicGlucoseEffects(
-            from: start.addingTimeInterval(-IntegralRetrospectiveCorrection.retrospectionInterval),
+            from: start.addingTimeInterval(-(rcRetrospectionInterval ?? IntegralRetrospectiveCorrection.retrospectionInterval)),
             carbRatios: carbRatio,
             insulinSensitivities: sensitivity,
             absorptionModel: carbAbsorptionModel
@@ -604,8 +612,8 @@ public struct LoopAlgorithm {
             .combinedSums(of: LoopMath.retrospectiveCorrectionGroupingInterval * 1.01)
 
         let rc: RetrospectiveCorrection = useIntegralRetrospectiveCorrection
-            ? IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale)
-            : StandardRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
+            ? IntegralRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale, integrationInterval: rcRetrospectionInterval, maxEffectDuration: rcEffectDuration)
+            : StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration)
 
         var prediction: [PredictedGlucoseValue] = []
         var retrospectiveCorrectionEffects: [GlucoseEffect] = []

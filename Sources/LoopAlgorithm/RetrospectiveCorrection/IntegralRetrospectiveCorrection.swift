@@ -84,6 +84,14 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
     /// Ceiling applied to the correction rate (see `defaultMaxCorrectionVelocity`); nil disables it.
     public let maxCorrectionVelocity: LoopQuantity?
 
+    /// RC integration window — how far back discrepancies are gathered and summed.
+    /// Default: `retrospectionInterval` (180 min). Exposed so the evaluator can tune
+    /// "how far back RC looks".
+    let integrationInterval: TimeInterval
+    /// Ceiling on the integral correction effect duration — how far into the future the
+    /// correction is allowed to persist. Default: `maximumCorrectionEffectDuration` (180 min).
+    let maxEffectDuration: TimeInterval
+
     /// All math is performed with glucose expressed in mg/dL
     private let unit = LoopUnit.milligramsPerDeciliter
 
@@ -101,6 +109,8 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
                 dropGainScale: Double = 1.0, riseGainScale: Double = 1.0,
                 lowMemoryScale: Double = 0.0,
                 dropDurationScale: Double = 1.0, riseDurationScale: Double = 1.0,
+                integrationInterval: TimeInterval? = nil,
+                maxEffectDuration: TimeInterval? = nil,
                 maxCorrectionVelocity: LoopQuantity? = IntegralRetrospectiveCorrection.defaultMaxCorrectionVelocity) {
         self.effectDuration = effectDuration
         self.dropGainScale = dropGainScale
@@ -108,6 +118,8 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
         self.lowMemoryScale = lowMemoryScale
         self.dropDurationScale = dropDurationScale
         self.riseDurationScale = riseDurationScale
+        self.integrationInterval = integrationInterval ?? Self.retrospectionInterval
+        self.maxEffectDuration = maxEffectDuration ?? Self.maximumCorrectionEffectDuration
         self.maxCorrectionVelocity = maxCorrectionVelocity
     }
     
@@ -157,7 +169,7 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
         integralCorrectionEffectDuration = effectDuration
         
         // Calculate integral retrospective correction if past discrepancies over integration interval are available and if user settings are available
-        if let pastDiscrepancies = retrospectiveGlucoseDiscrepanciesSummed?.filterDateRange(glucoseDate.addingTimeInterval(-Self.retrospectionInterval), glucoseDate) {
+        if let pastDiscrepancies = retrospectiveGlucoseDiscrepanciesSummed?.filterDateRange(glucoseDate.addingTimeInterval(-integrationInterval), glucoseDate) {
 
             // To reduce response delay, integral retrospective correction is computed over an array of recent contiguous discrepancy values having the same sign as the latest discrepancy value
             recentDiscrepancyValues = []
@@ -174,7 +186,7 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
             // rebounds), but reaching back INTO the low (and collecting it) may bridge any
             // gap within the retrospection window — a sensor dropout during the low must
             // not erase it. integralForget still down-weights an older low naturally.
-            let carryGapTolerance = Self.retrospectionInterval
+            let carryGapTolerance = integrationInterval
             var inCarryPhase = false
             for pastDiscrepancy in pastDiscrepancies.reversed() {
                 let pastDiscrepancyValue = pastDiscrepancy.quantity.doubleValue(for: unit)
@@ -240,7 +252,7 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
             let durationScale = currentDiscrepancyValue < 0 ? dropDurationScale : riseDurationScale
             integralCorrectionEffectMinutes *= durationScale
             // Limit effect duration (cap scales with the drop side so persistence isn't clipped)
-            integralCorrectionEffectMinutes = min(integralCorrectionEffectMinutes, IntegralRetrospectiveCorrection.maximumCorrectionEffectDuration.minutes * Swift.max(1.0, durationScale))
+            integralCorrectionEffectMinutes = min(integralCorrectionEffectMinutes, maxEffectDuration.minutes * Swift.max(1.0, durationScale))
             
             // Differential effect math
             var differentialDiscrepancy: Double = 0.0
