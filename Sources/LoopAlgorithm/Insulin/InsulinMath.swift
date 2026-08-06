@@ -35,10 +35,39 @@ public enum SensitivityDecomposition: Sendable {
     case physicalDelivery
 }
 
+/// Class-1 deployed-Loop-main emulation toggles for InsulinMath.
+public enum InsulinMathCompat {
+    /// When true, reproduce deployed Loop main's delta-quantized basal IOB (the
+    /// "basal ripple"): `continuousDeliveryInsulinOnBoard` quantizes its
+    /// integration bound to the delta grid, so a whole chunk is added
+    /// discontinuously each time `time` crosses a delta boundary — a delta-scale
+    /// ripple on any basal segment longer than one delta. The fixed (default,
+    /// false) path integrates continuously (PR #35), which deployed Loop main
+    /// lacks. Set true for deployment-faithful replay of Loop-main users.
+    public nonisolated(unsafe) static var useLegacyBasalRippleIOB = false
+}
+
 extension BasalRelativeDose {
     private func continuousDeliveryInsulinOnBoard(at date: Date, delta: TimeInterval) -> Double {
         let doseDuration = endDate.timeIntervalSince(startDate)  // t1
         let time = date.timeIntervalSince(startDate)
+
+        if InsulinMathCompat.useLegacyBasalRippleIOB {
+            // Deployed Loop main (pre-#35): delta-quantized upper bound → ripple.
+            var iob: Double = 0
+            var doseDate = TimeInterval(0)  // i
+            repeat {
+                let segment: Double
+                if doseDuration > 0 {
+                    segment = max(0, min(doseDate + delta, doseDuration) - doseDate) / doseDuration
+                } else {
+                    segment = 1
+                }
+                iob += segment * insulinModel.percentEffectRemaining(at: time - doseDate)
+                doseDate += delta
+            } while doseDate <= min(floor((time + insulinModel.delay) / delta) * delta, doseDuration)
+            return iob
+        }
 
         guard doseDuration > 0 else {
             return insulinModel.percentEffectRemaining(at: time)
