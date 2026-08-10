@@ -230,6 +230,7 @@ public struct LoopAlgorithm {
         earlyRiseBgHigh: Double = 140,
         earlyRiseSlopeThreshold: Double = 0.3,
         includingPositiveVelocityAndRC: Bool = true,
+        useLegacyRCDecay: Bool = false,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         adaptiveCarbAbsorption: Bool = false,
@@ -326,9 +327,9 @@ public struct LoopAlgorithm {
         let rc: RetrospectiveCorrection
 
         if useIntegralRetrospectiveCorrection {
-            rc = IntegralRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale, integrationInterval: rcRetrospectionInterval, maxEffectDuration: rcEffectDuration)
+            rc = IntegralRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale, integrationInterval: rcRetrospectionInterval, maxEffectDuration: rcEffectDuration, useLegacyDecay: useLegacyRCDecay)
         } else {
-            rc = StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration)
+            rc = StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, useLegacyDecay: useLegacyRCDecay)
         }
 
         if let latestGlucose = glucoseHistory.last {
@@ -540,6 +541,7 @@ public struct LoopAlgorithm {
         earlyRiseBgHigh: Double = 140,
         earlyRiseSlopeThreshold: Double = 0.3,
         includingPositiveVelocityAndRC: Bool = true,
+        useLegacyRCDecay: Bool = false,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         adaptiveCarbAbsorption: Bool = false,
@@ -618,8 +620,8 @@ public struct LoopAlgorithm {
             .combinedSums(of: LoopMath.retrospectiveCorrectionGroupingInterval * 1.01)
 
         let rc: RetrospectiveCorrection = useIntegralRetrospectiveCorrection
-            ? IntegralRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale, integrationInterval: rcRetrospectionInterval, maxEffectDuration: rcEffectDuration)
-            : StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration)
+            ? IntegralRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale, integrationInterval: rcRetrospectionInterval, maxEffectDuration: rcEffectDuration, useLegacyDecay: useLegacyRCDecay)
+            : StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, useLegacyDecay: useLegacyRCDecay)
 
         var prediction: [PredictedGlucoseValue] = []
         var retrospectiveCorrectionEffects: [GlucoseEffect] = []

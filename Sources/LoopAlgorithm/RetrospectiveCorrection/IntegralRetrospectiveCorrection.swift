@@ -20,6 +20,8 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
     /// RetrospectiveCorrection protocol variables
     /// Standard effect duration
     let effectDuration: TimeInterval
+    /// Emulate pre-#33 (Loop-main) step-by-step decay for the RC effect timeline.
+    let useLegacyDecay: Bool
     /// Asymmetric correction gains (default 1.0 == standard symmetric IRC).
     /// `dropGainScale` multiplies the correction when the current discrepancy run
     /// is negative (observed BG dropping faster than the model predicted =
@@ -111,8 +113,10 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
                 dropDurationScale: Double = 1.0, riseDurationScale: Double = 1.0,
                 integrationInterval: TimeInterval? = nil,
                 maxEffectDuration: TimeInterval? = nil,
-                maxCorrectionVelocity: LoopQuantity? = IntegralRetrospectiveCorrection.defaultMaxCorrectionVelocity) {
+                maxCorrectionVelocity: LoopQuantity? = IntegralRetrospectiveCorrection.defaultMaxCorrectionVelocity,
+                useLegacyDecay: Bool = false) {
         self.effectDuration = effectDuration
+        self.useLegacyDecay = useLegacyDecay
         self.dropGainScale = dropGainScale
         self.riseGainScale = riseGainScale
         self.lowMemoryScale = lowMemoryScale
@@ -303,7 +307,7 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
         correctionVelocity = velocity
 
         // Update array of glucose correction effects
-        glucoseCorrectionEffect = startingGlucose.decayEffect(atRate: velocity, for: integralCorrectionEffectDuration!)
+        glucoseCorrectionEffect = startingGlucose.decayEffect(atRate: velocity, for: integralCorrectionEffectDuration!, useLegacyDecay: useLegacyDecay)
         
         // Return glucose correction effects
         return( glucoseCorrectionEffect )

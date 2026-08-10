@@ -184,13 +184,34 @@ extension GlucoseValue {
 
      - returns: An array of glucose effects
      */
-    public func decayEffect(atRate rate: LoopQuantity, for duration: TimeInterval, withDelta delta: TimeInterval = 5 * 60) -> [GlucoseEffect] {
+    public func decayEffect(atRate rate: LoopQuantity, for duration: TimeInterval, withDelta delta: TimeInterval = 5 * 60, useLegacyDecay: Bool = false) -> [GlucoseEffect] {
         guard let (startDate, endDate) = LoopMath.simulationDateRangeForSamples([self], duration: duration, delta: delta) else {
             return []
         }
 
         let glucoseUnit = LoopUnit.milligramsPerDeciliter
         let velocityUnit = GlucoseEffectVelocity.perSecondUnit
+
+        // LEGACY (pre-#33 / classic LoopKit / Loop main without LoopKit#556): accumulate
+        // the decay step-by-step from the floored simulation boundary. For samples NOT
+        // aligned to delta boundaries (real jittery CGM) this exhibits a small discontinuity
+        // at bucket boundaries — the exact deployed-Loop-main behavior for donors predating
+        // that change. Pass useLegacyDecay=true to emulate it.
+        if useLegacyDecay {
+            let intercept = rate.doubleValue(for: velocityUnit) // mg/dL/s
+            let decayStartDate = startDate.addingTimeInterval(delta)
+            let slope = -intercept / (duration - delta)  // mg/dL/s/s
+            var values = [GlucoseEffect(startDate: startDate, quantity: quantity)]
+            var date = decayStartDate
+            var lastValue = quantity.doubleValue(for: glucoseUnit)
+            repeat {
+                let value = lastValue + (intercept + slope * date.timeIntervalSince(decayStartDate)) * delta
+                values.append(GlucoseEffect(startDate: date, quantity: LoopQuantity(unit: glucoseUnit, doubleValue: value)))
+                lastValue = value
+                date = date.addingTimeInterval(delta)
+            } while date < endDate
+            return values
+        }
 
         let firstChange = rate.doubleValue(for: velocityUnit) * delta // mg/dL/s * s = mg/dL
         let secondChange = firstChange * (1 - delta / (duration - delta))
