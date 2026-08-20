@@ -235,6 +235,7 @@ public struct LoopAlgorithm {
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         adaptiveCarbAbsorption: Bool = false,
         initialAbsorptionTimeOverrun: Double = CarbMath.defaultAbsorptionTimeOverrun,
+        absorptionTimeOverrun: Double = CarbMath.defaultAbsorptionTimeOverrun,
         gradualTransitionsThreshold: Double? = 40.0,
         momentumVelocityMaximum: LoopQuantity? = nil,
         momentumProjectionDuration: TimeInterval? = nil,
@@ -306,11 +307,40 @@ public struct LoopAlgorithm {
             to: insulinCounteractionEffects,
             carbRatio: carbRatio,
             insulinSensitivity: sensitivity,
+            absorptionTimeOverrun: absorptionTimeOverrun,
             initialAbsorptionTimeOverrun: initialAbsorptionTimeOverrun,
             absorptionModel: carbAbsorptionModel,
             adaptiveAbsorptionRateEnabled: adaptiveCarbAbsorption
         )
 
+        // Diagnostic (LoopEval): CARB_STATUS_DUMP=<ISO-prefix> dumps per-entry builder
+        // state for cycles whose start matches the prefix — one JSON line to stderr.
+        if let pfx = ProcessInfo.processInfo.environment["CARB_STATUS_DUMP"],
+           ISO8601DateFormatter().string(from: start).hasPrefix(pfx) {
+            let g = LoopUnit.gram
+            let entries: [[String: Any]] = carbStatus.map { st in
+                var d: [String: Any] = [
+                    "entry_t": ISO8601DateFormatter().string(from: st.entry.startDate),
+                    "grams": st.entry.quantity.doubleValue(for: g),
+                    "absorptionTime": st.entry.absorptionTime ?? -1,
+                ]
+                if let a = st.absorption {
+                    d["observed"] = a.observed.doubleValue(for: g)
+                    d["clamped"] = a.clamped.doubleValue(for: g)
+                    d["remaining"] = a.remaining.doubleValue(for: g)
+                    d["estimatedTimeRemainingMin"] = a.estimatedTimeRemaining / 60
+                    d["observedDurMin"] = a.observedDate.duration / 60
+                }
+                return d
+            }
+            let obj: [String: Any] = ["t": ISO8601DateFormatter().string(from: start),
+                                      "iceCount": insulinCounteractionEffects.count,
+                                      "iceLastEnd": insulinCounteractionEffects.last.map { ISO8601DateFormatter().string(from: $0.endDate) } ?? "nil",
+                                      "entries": entries]
+            if let data = try? JSONSerialization.data(withJSONObject: obj) {
+                FileHandle.standardError.write(data); FileHandle.standardError.write(Data("\n".utf8))
+            }
+        }
         carbEffects = carbStatus.dynamicGlucoseEffects(
             from: start.addingTimeInterval(-(rcRetrospectionInterval ?? IntegralRetrospectiveCorrection.retrospectionInterval)),
             carbRatios: carbRatio,
@@ -546,6 +576,7 @@ public struct LoopAlgorithm {
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         adaptiveCarbAbsorption: Bool = false,
         initialAbsorptionTimeOverrun: Double = CarbMath.defaultAbsorptionTimeOverrun,
+        absorptionTimeOverrun: Double = CarbMath.defaultAbsorptionTimeOverrun,
         gradualTransitionsThreshold: Double? = 40.0,
         momentumVelocityMaximum: LoopQuantity? = nil,
         momentumProjectionDuration: TimeInterval? = nil,
@@ -603,6 +634,7 @@ public struct LoopAlgorithm {
             to: insulinCounteractionEffects,
             carbRatio: carbRatio,
             insulinSensitivity: sensitivity,
+            absorptionTimeOverrun: absorptionTimeOverrun,
             initialAbsorptionTimeOverrun: initialAbsorptionTimeOverrun,
             absorptionModel: carbAbsorptionModel,
             adaptiveAbsorptionRateEnabled: adaptiveCarbAbsorption
