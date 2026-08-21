@@ -245,7 +245,16 @@ public struct LoopAlgorithm {
         useAsymmetricMomentum: Bool = false,
         useHybridAsymmetricMomentum: Bool = false,
         momentumAlphaSlow: Double = 0.15,
-        momentumAlphaFast: Double = 0.85
+        momentumAlphaFast: Double = 0.85,
+        // Loop-main ICE compatibility (LoopDataManager:446,1015,1077): deployed FREEZES
+        // each counteraction velocity at computation time and appends only new intervals
+        // per loop; old intervals are never recomputed from reconciled history. When
+        // non-nil, these frozen velocities are used verbatim and ONLY intervals after
+        // their last endDate are computed (against the CURRENT insulinEffects). The
+        // merged array is returned in effects.insulinCounteraction for the caller to
+        // persist. nil = legacy full recompute (identical when the store never changes
+        // retroactively).
+        frozenCounteraction: [GlucoseEffectVelocity]? = nil
     ) -> LoopPrediction<CarbType> where CarbType: CarbEntry, GlucoseType: GlucoseSampleValue, InsulinDoseType: InsulinDose {
 
         var prediction: [PredictedGlucoseValue] = []
@@ -297,7 +306,18 @@ public struct LoopAlgorithm {
             }
 
             // ICE
-            insulinCounteractionEffects = glucoseHistory.counteractionEffects(to: insulinEffects)
+            if let frozen = frozenCounteraction, let lastEnd = frozen.last?.endDate {
+                // Append-only: compute velocities only for glucose at/after the frozen
+                // tail (the boundary sample starts the next interval), as deployed
+                // getCounteractionEffects(start: nextCounteractionEffectDate) does.
+                let newGlucose = glucoseHistory.filter { $0.startDate >= lastEnd }
+                let newVel = newGlucose.count >= 2
+                    ? newGlucose.counteractionEffects(to: insulinEffects).filter { $0.startDate >= lastEnd }
+                    : []
+                insulinCounteractionEffects = frozen + newVel
+            } else {
+                insulinCounteractionEffects = glucoseHistory.counteractionEffects(to: insulinEffects)
+            }
         } else {
             activeInsulin = 0
         }
@@ -316,7 +336,7 @@ public struct LoopAlgorithm {
         // Diagnostic (LoopEval): CARB_STATUS_DUMP=<ISO-prefix> dumps per-entry builder
         // state for cycles whose start matches the prefix — one JSON line to stderr.
         if let pfx = ProcessInfo.processInfo.environment["CARB_STATUS_DUMP"],
-           ISO8601DateFormatter().string(from: start).hasPrefix(pfx) {
+           pfx.split(separator: ",").contains(where: { ISO8601DateFormatter().string(from: start).hasPrefix($0) }) {
             let g = LoopUnit.gram
             let entries: [[String: Any]] = carbStatus.map { st in
                 var d: [String: Any] = [
