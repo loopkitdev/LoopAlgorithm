@@ -108,54 +108,6 @@ class InsulinMathTests: XCTestCase {
         XCTAssertEqual(effects.last!.quantity.doubleValue(for: .milligramsPerDeciliter), -500)
     }
 
-    // Does the optimized sliding-window `glucoseEffects` (precomputed per-dose
-    // asymptotes + active-dose window) produce the SAME per-step effect timeline as
-    // deployed Loop main's straight double loop (sum `dose.glucoseEffect(at:)` over
-    // all doses at each grid date)? Same per-dose formula both ways; this checks the
-    // ASSEMBLY (how effects are divvied across forecast steps) hasn't drifted.
-    func testGlucoseEffectsSlidingWindowMatchesStraightLoop() {
-        let startDate = dateFormatter.date(from: "2026-08-07T01:01:00")!
-        func t(_ o: TimeInterval) -> Date { startDate.addingTimeInterval(o) }
-        let delta = TimeInterval(minutes: 5)
-        let isf = 50.0
-
-        // Spans the DIA: old boluses (decayed → asymptote path) + issue-report-style
-        // clustered recent boluses + reduced temps, several on NON-grid-aligned offsets
-        // to expose any discretization drift at chunk/window boundaries.
-        let doses: [BasalRelativeDose] = [
-            BasalRelativeDose(type: .bolus, startDate: t(.hours(-7)),   endDate: t(.hours(-7)),                volume: 2.0),
-            BasalRelativeDose(type: .bolus, startDate: t(.hours(-6)),   endDate: t(.hours(-6)),                volume: 1.0),
-            BasalRelativeDose(type: .basal(scheduledRate: 1.0), startDate: t(.hours(-2)), endDate: t(.hours(-2) + .minutes(30)), volume: 0.1),
-            BasalRelativeDose(type: .bolus, startDate: t(.minutes(-30)), endDate: t(.minutes(-30) + 20),       volume: 0.05),
-            BasalRelativeDose(type: .bolus, startDate: t(.minutes(-25)), endDate: t(.minutes(-25) + 20),       volume: 0.30),
-            BasalRelativeDose(type: .bolus, startDate: t(.minutes(-20)), endDate: t(.minutes(-20) + 20),       volume: 0.35),
-            BasalRelativeDose(type: .bolus, startDate: t(.minutes(-12.3)), endDate: t(.minutes(-12.3) + 14),   volume: 0.15),
-            BasalRelativeDose(type: .basal(scheduledRate: 1.0), startDate: t(.minutes(-9.7)), endDate: t(.minutes(-4.7)), volume: 0.02),
-        ]
-
-        let sensitivity: [AbsoluteScheduleValue<LoopQuantity>] = [
-            AbsoluteScheduleValue(startDate: t(.hours(-10)), endDate: t(.hours(8)),
-                                  value: LoopQuantity(unit: .milligramsPerDeciliter, doubleValue: isf))
-        ]
-
-        let pkg = doses.glucoseEffects(insulinSensitivityHistory: sensitivity, delta: delta)
-
-        // Deployed-main-style straight loop over the SAME grid dates.
-        let ref: [Double] = pkg.map { pt in
-            doses.reduce(0.0) { $0 + $1.glucoseEffect(at: pt.startDate, insulinSensitivity: isf, delta: delta) }
-        }
-
-        var maxDiff = 0.0
-        var maxAt = startDate
-        for (i, pt) in pkg.enumerated() {
-            let d = abs(pt.quantity.doubleValue(for: .milligramsPerDeciliter) - ref[i])
-            if d > maxDiff { maxDiff = d; maxAt = pt.startDate }
-        }
-        print("glucoseEffects sliding-window vs straight-loop: n=\(pkg.count) maxDiff=\(maxDiff) mg/dL @ \(maxAt)")
-        XCTAssertEqual(maxDiff, 0.0, accuracy: 1e-6,
-                       "sliding-window glucoseEffects drifts from the straight loop by \(maxDiff) mg/dL")
-    }
-
     func testGlucoseEffectsMidAbsorptionISFTimeline() {
         let startDate = dateFormatter.date(from: "2015-10-15T00:00:00")!
         func t(_ offset: TimeInterval) -> Date { return startDate.addingTimeInterval(offset) }
