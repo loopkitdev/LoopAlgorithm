@@ -214,6 +214,9 @@ public struct LoopAlgorithm {
         ircLowMemoryScale: Double = 0.0,
         ircDropDurationScale: Double = 1.0,
         ircRiseDurationScale: Double = 1.0,
+        // Apply ircDropGainScale / ircRiseGainScale to STANDARD RC too (asymmetric
+        // standard RC candidate). Default false == deployed symmetric standard RC.
+        asymmetricStandardRC: Bool = false,
         // RC integration window (how far back) / effect duration (how far forward).
         // nil => the deployed static defaults (180 min / 60 min).
         rcRetrospectionInterval: TimeInterval? = nil,
@@ -359,7 +362,7 @@ public struct LoopAlgorithm {
         if useIntegralRetrospectiveCorrection {
             rc = IntegralRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale, integrationInterval: rcRetrospectionInterval, maxEffectDuration: rcEffectDuration, useLegacyDecay: useLegacyRCDecay)
         } else {
-            rc = StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, useLegacyDecay: useLegacyRCDecay)
+            rc = StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, useLegacyDecay: useLegacyRCDecay, dropGainScale: asymmetricStandardRC ? ircDropGainScale : 1.0, riseGainScale: asymmetricStandardRC ? ircRiseGainScale : 1.0)
         }
 
         if let latestGlucose = glucoseHistory.last {
@@ -555,6 +558,9 @@ public struct LoopAlgorithm {
         ircLowMemoryScale: Double = 0.0,
         ircDropDurationScale: Double = 1.0,
         ircRiseDurationScale: Double = 1.0,
+        // Apply ircDropGainScale / ircRiseGainScale to STANDARD RC too (asymmetric
+        // standard RC candidate). Default false == deployed symmetric standard RC.
+        asymmetricStandardRC: Bool = false,
         // RC integration window (how far back) / effect duration (how far forward).
         // nil => the deployed static defaults (180 min / 60 min).
         rcRetrospectionInterval: TimeInterval? = nil,
@@ -653,7 +659,7 @@ public struct LoopAlgorithm {
 
         let rc: RetrospectiveCorrection = useIntegralRetrospectiveCorrection
             ? IntegralRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, dropGainScale: ircDropGainScale, riseGainScale: ircRiseGainScale, lowMemoryScale: ircLowMemoryScale, dropDurationScale: ircDropDurationScale, riseDurationScale: ircRiseDurationScale, integrationInterval: rcRetrospectionInterval, maxEffectDuration: rcEffectDuration, useLegacyDecay: useLegacyRCDecay)
-            : StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, useLegacyDecay: useLegacyRCDecay)
+            : StandardRetrospectiveCorrection(effectDuration: rcEffectDuration ?? LoopMath.retrospectiveCorrectionEffectDuration, useLegacyDecay: useLegacyRCDecay, dropGainScale: asymmetricStandardRC ? ircDropGainScale : 1.0, riseGainScale: asymmetricStandardRC ? ircRiseGainScale : 1.0)
 
         var prediction: [PredictedGlucoseValue] = []
         var retrospectiveCorrectionEffects: [GlucoseEffect] = []
