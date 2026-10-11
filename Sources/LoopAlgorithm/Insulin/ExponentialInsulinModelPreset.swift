@@ -18,6 +18,14 @@ public enum ExponentialInsulinModelPreset: String, Codable {
     /// IOB curve nearly matches peak-55/DIA-6 (Loop's fiasp) — used to confirm
     /// control-equivalence of the physiologically-accurate model.
     case lateShort90dia4
+    /// A customized exponential curve, for Loop builds with a modified insulin model (some
+    /// users ship a shorter action duration). Its parameters are process-wide and set once at
+    /// startup through `customActionDuration` / `customPeakActivity`; the defaults equal
+    /// rapidActingAdult.
+    case custom
+
+    public nonisolated(unsafe) static var customActionDuration: TimeInterval = .minutes(360)
+    public nonisolated(unsafe) static var customPeakActivity: TimeInterval = .minutes(75)
 }
 
 
@@ -37,6 +45,8 @@ extension ExponentialInsulinModelPreset {
             return .minutes(300)
         case .lateShort90dia4:
             return .minutes(240)
+        case .custom:
+            return Self.customActionDuration
         }
     }
 
@@ -54,6 +64,8 @@ extension ExponentialInsulinModelPreset {
             return .minutes(29)
         case .lateShort90dia4:
             return .minutes(90)
+        case .custom:
+            return Self.customPeakActivity
         }
     }
 
@@ -70,6 +82,8 @@ extension ExponentialInsulinModelPreset {
         case.afrezza:
             return .minutes(10)
         case .lateShort90dia4:
+            return .minutes(10)
+        case .custom:
             return .minutes(10)
         }
     }
