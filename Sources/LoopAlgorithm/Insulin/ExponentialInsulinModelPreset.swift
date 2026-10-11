@@ -23,9 +23,13 @@ public enum ExponentialInsulinModelPreset: String, Codable {
     /// startup through `customActionDuration` / `customPeakActivity`; the defaults equal
     /// rapidActingAdult.
     case custom
+    /// A second custom curve, for a user who changed from one customized build to another.
+    case custom2
 
     public nonisolated(unsafe) static var customActionDuration: TimeInterval = .minutes(360)
     public nonisolated(unsafe) static var customPeakActivity: TimeInterval = .minutes(75)
+    public nonisolated(unsafe) static var custom2ActionDuration: TimeInterval = .minutes(360)
+    public nonisolated(unsafe) static var custom2PeakActivity: TimeInterval = .minutes(75)
 }
 
 
@@ -47,6 +51,8 @@ extension ExponentialInsulinModelPreset {
             return .minutes(240)
         case .custom:
             return Self.customActionDuration
+        case .custom2:
+            return Self.custom2ActionDuration
         }
     }
 
@@ -66,6 +72,8 @@ extension ExponentialInsulinModelPreset {
             return .minutes(90)
         case .custom:
             return Self.customPeakActivity
+        case .custom2:
+            return Self.custom2PeakActivity
         }
     }
 
@@ -83,7 +91,7 @@ extension ExponentialInsulinModelPreset {
             return .minutes(10)
         case .lateShort90dia4:
             return .minutes(10)
-        case .custom:
+        case .custom, .custom2:
             return .minutes(10)
         }
     }
