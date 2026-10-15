@@ -674,10 +674,12 @@ extension Collection where Element == BasalRelativeDose {
         var increments = [Double](repeating: 0, count: n)
 
         // Reduce loop body to a closure-free static-like body to keep
-        // capture/Sendable surface minimal. concurrentPerform's closure isn't
-        // @Sendable, so this is tolerated by the compiler.
-        increments.withUnsafeMutableBufferPointer { incBuf in
-            DispatchQueue.concurrentPerform(iterations: n - 1) { idx in
+        // capture/Sendable surface minimal. Darwin's concurrentPerform closure isn't
+        // @Sendable, so this is tolerated by the compiler; swift-corelibs Dispatch on
+        // Linux requires @Sendable, so there the same body runs serially.
+        increments.withUnsafeMutableBufferPointer { buffer in
+            let incBuf = buffer   // a copy of the pointer, so the closure can capture it
+            let step = { (idx: Int) in
                 // idx in 0..<n-1 maps to step (idx+1)
                 let i = idx + 1
                 let lastDate = timePoints[i - 1]
@@ -715,6 +717,11 @@ extension Collection where Element == BasalRelativeDose {
                 }
                 incBuf[i] = inc
             }
+            #if os(Linux)
+            for idx in 0..<(n - 1) { step(idx) }
+            #else
+            DispatchQueue.concurrentPerform(iterations: n - 1, execute: step)
+            #endif
         }
 
         // Cumsum + emit GlucoseEffect — fast, single-threaded.
