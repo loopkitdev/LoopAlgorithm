@@ -35,12 +35,9 @@ public struct AlgorithmInputFixture: AlgorithmInput {
     public var recommendationType: DoseRecommendationType = .automaticBolus
     public var automaticBolusApplicationFactor: Double?
     public var gradualTransitionsThreshold: Double?
-    /// Optional experiments; absent in existing fixtures, which therefore run standard LoopAlgorithm.
-    public var algorithmExperiments: AlgorithmExperiments?
-
-    public var experiments: AlgorithmExperiments {
-        algorithmExperiments ?? .none
-    }
+    /// Optional experiment; absent in existing fixtures, which therefore run standard LoopAlgorithm.
+    public var experiment: AlgorithmExperiment?
+    public var volatilityBaseline: Double?
 
     public var recommendationInsulinModel: InsulinModel {
         recommendationInsulinType.insulinModel
@@ -154,6 +151,8 @@ extension AlgorithmInputFixture: Codable {
 
         self.automaticBolusApplicationFactor = try container.decodeIfPresent(Double.self, forKey: .automaticBolusApplicationFactor)
         self.gradualTransitionsThreshold = try container.decodeIfPresent(Double.self, forKey: .gradualTransitionsThreshold) ?? 40.0
+        self.experiment = try container.decodeIfPresent(AlgorithmExperiment.self, forKey: .experiment)
+        self.volatilityBaseline = try container.decodeIfPresent(Double.self, forKey: .volatilityBaseline)
 
     }
 
@@ -190,6 +189,8 @@ extension AlgorithmInputFixture: Codable {
         try container.encode(recommendationType.rawValue, forKey: .recommendationType)
         try container.encode(automaticBolusApplicationFactor, forKey: .automaticBolusApplicationFactor)
         try container.encode(gradualTransitionsThreshold, forKey: .gradualTransitionsThreshold)
+        try container.encodeIfPresent(experiment, forKey: .experiment)
+        try container.encodeIfPresent(volatilityBaseline, forKey: .volatilityBaseline)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -212,6 +213,8 @@ extension AlgorithmInputFixture: Codable {
         case recommendationType
         case automaticBolusApplicationFactor
         case gradualTransitionsThreshold
+        case experiment
+        case volatilityBaseline
     }
 }
 

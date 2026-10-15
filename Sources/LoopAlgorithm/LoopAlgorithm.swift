@@ -180,7 +180,7 @@ public struct LoopAlgorithm {
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
         gradualTransitionsThreshold: Double? = 40.0,
-        experiments: AlgorithmExperiments = .none
+        experiment: AlgorithmExperiment? = nil
     ) -> LoopPrediction<CarbType> where CarbType: CarbEntry, GlucoseType: GlucoseSampleValue, InsulinDoseType: InsulinDose {
 
         var prediction: [PredictedGlucoseValue] = []
@@ -255,20 +255,21 @@ public struct LoopAlgorithm {
 
         let rc: RetrospectiveCorrection
 
-        // Experiments (all no-ops at their defaults): asymmetric RC gains, and the post-low rise-cut,
-        // which replaces the rise gain while its gate is open.
-        let rcDropScale = experiments.retrospectiveCorrectionDropScale
-        var rcRiseScale = experiments.retrospectiveCorrectionRiseScale
-        if let cut = experiments.postLowRiseCut, cut.isActive(glucoseHistory: glucoseHistory) {
+        // Experiments (no-ops when `experiment` is nil): asymmetric RC gains, and the post-low
+        // rise-cut, which replaces the rise gain while its gate is open.
+        let experimentParameters = ExperimentParameters(experiment: experiment, volatilityBaseline: nil)
+        let rcDropScale = experimentParameters.retrospectiveCorrectionDropScale
+        var rcRiseScale = experimentParameters.retrospectiveCorrectionRiseScale
+        if let cut = experimentParameters.postLowRiseCut, cut.isActive(glucoseHistory: glucoseHistory) {
             rcRiseScale = cut.riseScale
         }
 
-        if useIntegralRetrospectiveCorrection {
+        if useIntegralRetrospectiveCorrection || experimentParameters.forceIntegralRetrospectiveCorrection {
             rc = IntegralRetrospectiveCorrection(
                 effectDuration: LoopMath.retrospectiveCorrectionEffectDuration,
                 dropScale: rcDropScale,
                 riseScale: rcRiseScale,
-                maxVelocity: experiments.integralRetrospectiveCorrectionMaxVelocity)
+                maxVelocity: experimentParameters.integralRetrospectiveCorrectionMaxVelocity)
         } else {
             rc = StandardRetrospectiveCorrection(
                 effectDuration: LoopMath.retrospectiveCorrectionEffectDuration,
@@ -567,19 +568,19 @@ public struct LoopAlgorithm {
                 useMidAbsorptionISF: input.useMidAbsorptionISF,
                 carbAbsorptionModel: input.carbAbsorptionModel.model,
                 gradualTransitionsThreshold: input.gradualTransitionsThreshold,
-                experiments: input.experiments
+                experiment: input.experiment
             )
 
-            // Experiments that adjust the forecast before dosing (no-ops unless enabled).
-            let volatility: Double? = input.experiments.needsVolatility ? GlucoseVolatility.sigma5(input.glucoseHistory) : nil
-            if !input.experiments.isNone {
-                prediction.glucose = applyExperimentalForecastAdjustments(
-                    to: prediction,
-                    experiments: input.experiments,
-                    volatility: volatility,
-                    basal: input.basal,
-                    sensitivity: input.sensitivity,
-                    insulinModel: input.recommendationInsulinModel)
+            // Experiments that adjust the forecast before dosing (no-ops when `experiment` is nil).
+            let experimentParameters = ExperimentParameters(
+                experiment: input.experiment,
+                volatilityBaseline: input.experiment == .stack
+                    ? (input.volatilityBaseline ?? GlucoseVolatility.baseline(input.glucoseHistory)) : nil)
+            let volatility: Double? = experimentParameters.needsVolatility ? GlucoseVolatility.sigma5(input.glucoseHistory) : nil
+            if let band = experimentParameters.volatilityBand, let volatility,
+               !(band.carbGate && (prediction.activeCarbs ?? 0) > 0)
+            {
+                prediction.glucose = volatilityBanded(prediction.glucose, band: band, volatility: volatility)
             }
 
             let sensitivityForDosing: [AbsoluteScheduleValue<LoopQuantity>]
@@ -617,7 +618,7 @@ public struct LoopAlgorithm {
                 result = .success(.init(manual: recommendation))
             case .automaticBolus:
                 var applicationFactor = input.automaticBolusApplicationFactor ?? defaultBolusPartialApplicationFactor
-                if let licence = input.experiments.calmHighLicence, let volatility,
+                if let licence = experimentParameters.calmHighLicence, let volatility,
                    licence.isActive(currentGlucose: latestGlucose.quantity.doubleValue(for: .milligramsPerDeciliter),
                                     volatility: volatility, activeCarbs: prediction.activeCarbs ?? 0)
                 {
