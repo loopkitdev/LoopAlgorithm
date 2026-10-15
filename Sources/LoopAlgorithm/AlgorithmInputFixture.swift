@@ -35,6 +35,12 @@ public struct AlgorithmInputFixture: AlgorithmInput {
     public var recommendationType: DoseRecommendationType = .automaticBolus
     public var automaticBolusApplicationFactor: Double?
     public var gradualTransitionsThreshold: Double?
+    /// Optional experiments; absent in existing fixtures, which therefore run standard LoopAlgorithm.
+    public var algorithmExperiments: AlgorithmExperiments?
+
+    public var experiments: AlgorithmExperiments {
+        algorithmExperiments ?? .none
+    }
 
     public var recommendationInsulinModel: InsulinModel {
         recommendationInsulinType.insulinModel

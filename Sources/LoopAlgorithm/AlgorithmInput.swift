@@ -34,4 +34,11 @@ public protocol AlgorithmInput {
     var recommendationType: DoseRecommendationType { get }
     var automaticBolusApplicationFactor: Double? { get } // Defaults to 0.4
     var gradualTransitionsThreshold: Double? { get }
+    /// Optional algorithm experiments. Defaults to `.none` (standard LoopAlgorithm) for any conforming
+    /// type that does not provide it.
+    var experiments: AlgorithmExperiments { get }
+}
+
+extension AlgorithmInput {
+    public var experiments: AlgorithmExperiments { .none }
 }

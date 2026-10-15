@@ -57,8 +57,18 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
     var differentialCorrection: Double = 0.0
     var currentDate: Date = Date()
 
-    public init(effectDuration: TimeInterval) {
+    /// Experimental asymmetric gains (see `AlgorithmExperiments`): multiply the correction when the
+    /// current discrepancy run is negative (drop) or positive (rise). 1.0 / 1.0 is standard IRC.
+    let dropScale: Double
+    let riseScale: Double
+    /// Experimental ceiling on the correction rate, mg/dL per minute. nil = none (standard IRC).
+    let maxVelocity: Double?
+
+    public init(effectDuration: TimeInterval, dropScale: Double = 1.0, riseScale: Double = 1.0, maxVelocity: Double? = nil) {
         self.effectDuration = effectDuration
+        self.dropScale = dropScale
+        self.riseScale = riseScale
+        self.maxVelocity = maxVelocity
     }
     
     /**
@@ -158,7 +168,15 @@ public class IntegralRetrospectiveCorrection: RetrospectiveCorrection {
         
         let retrospectionTimeInterval = currentDiscrepancy.endDate.timeIntervalSince(currentDiscrepancy.startDate)
         let discrepancyTime = max(retrospectionTimeInterval, retrospectiveCorrectionGroupingInterval)
-            let velocity = LoopQuantity(unit: .milligramsPerDeciliterPerSecond, doubleValue: scaledCorrection / discrepancyTime)
+        if dropScale != 1.0 || riseScale != 1.0 {
+            scaledCorrection *= currentDiscrepancyValue < 0 ? dropScale : riseScale
+        }
+        var velocityValue = scaledCorrection / discrepancyTime
+        if let maxVelocity {
+            let cap = abs(maxVelocity) / 60.0
+            velocityValue = Swift.min(Swift.max(velocityValue, -cap), cap)
+        }
+        let velocity = LoopQuantity(unit: .milligramsPerDeciliterPerSecond, doubleValue: velocityValue)
         
         // Update array of glucose correction effects
         glucoseCorrectionEffect = startingGlucose.decayEffect(atRate: velocity, for: integralCorrectionEffectDuration!)

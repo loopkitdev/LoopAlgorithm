@@ -179,7 +179,8 @@ public struct LoopAlgorithm {
         includingPositiveVelocityAndRC: Bool = true,
         useMidAbsorptionISF: Bool = false,
         carbAbsorptionModel: CarbAbsorptionComputable = PiecewiseLinearAbsorption(),
-        gradualTransitionsThreshold: Double? = 40.0
+        gradualTransitionsThreshold: Double? = 40.0,
+        experiments: AlgorithmExperiments = .none
     ) -> LoopPrediction<CarbType> where CarbType: CarbEntry, GlucoseType: GlucoseSampleValue, InsulinDoseType: InsulinDose {
 
         var prediction: [PredictedGlucoseValue] = []
@@ -254,10 +255,25 @@ public struct LoopAlgorithm {
 
         let rc: RetrospectiveCorrection
 
+        // Experiments (all no-ops at their defaults): asymmetric RC gains, and the post-low rise-cut,
+        // which replaces the rise gain while its gate is open.
+        let rcDropScale = experiments.retrospectiveCorrectionDropScale
+        var rcRiseScale = experiments.retrospectiveCorrectionRiseScale
+        if let cut = experiments.postLowRiseCut, cut.isActive(glucoseHistory: glucoseHistory) {
+            rcRiseScale = cut.riseScale
+        }
+
         if useIntegralRetrospectiveCorrection {
-            rc = IntegralRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
+            rc = IntegralRetrospectiveCorrection(
+                effectDuration: LoopMath.retrospectiveCorrectionEffectDuration,
+                dropScale: rcDropScale,
+                riseScale: rcRiseScale,
+                maxVelocity: experiments.integralRetrospectiveCorrectionMaxVelocity)
         } else {
-            rc = StandardRetrospectiveCorrection(effectDuration: LoopMath.retrospectiveCorrectionEffectDuration)
+            rc = StandardRetrospectiveCorrection(
+                effectDuration: LoopMath.retrospectiveCorrectionEffectDuration,
+                dropScale: rcDropScale,
+                riseScale: rcRiseScale)
         }
 
         if let latestGlucose = glucoseHistory.last {
@@ -550,8 +566,21 @@ public struct LoopAlgorithm {
                 includingPositiveVelocityAndRC: input.includePositiveVelocityAndRC,
                 useMidAbsorptionISF: input.useMidAbsorptionISF,
                 carbAbsorptionModel: input.carbAbsorptionModel.model,
-                gradualTransitionsThreshold: input.gradualTransitionsThreshold
+                gradualTransitionsThreshold: input.gradualTransitionsThreshold,
+                experiments: input.experiments
             )
+
+            // Experiments that adjust the forecast before dosing (no-ops unless enabled).
+            let volatility: Double? = input.experiments.needsVolatility ? GlucoseVolatility.sigma5(input.glucoseHistory) : nil
+            if !input.experiments.isNone {
+                prediction.glucose = applyExperimentalForecastAdjustments(
+                    to: prediction,
+                    experiments: input.experiments,
+                    volatility: volatility,
+                    basal: input.basal,
+                    sensitivity: input.sensitivity,
+                    insulinModel: input.recommendationInsulinModel)
+            }
 
             let sensitivityForDosing: [AbsoluteScheduleValue<LoopQuantity>]
             if input.useMidAbsorptionISF {
@@ -587,9 +616,16 @@ public struct LoopAlgorithm {
                     target: input.target)
                 result = .success(.init(manual: recommendation))
             case .automaticBolus:
+                var applicationFactor = input.automaticBolusApplicationFactor ?? defaultBolusPartialApplicationFactor
+                if let licence = input.experiments.calmHighLicence, let volatility,
+                   licence.isActive(currentGlucose: latestGlucose.quantity.doubleValue(for: .milligramsPerDeciliter),
+                                    volatility: volatility, activeCarbs: prediction.activeCarbs ?? 0)
+                {
+                    applicationFactor = Swift.min(1.0, applicationFactor * licence.applicationFactorScale)
+                }
                 let recommendation = recommendAutomaticDose(
                     for: correction,
-                    applicationFactor: input.automaticBolusApplicationFactor ?? defaultBolusPartialApplicationFactor,
+                    applicationFactor: applicationFactor,
                     neutralBasalRate: scheduledBasalRate,
                     activeInsulin: prediction.activeInsulin!,
                     maxBolus: input.maxBolus,
