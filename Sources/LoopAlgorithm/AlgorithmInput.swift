@@ -34,4 +34,17 @@ public protocol AlgorithmInput {
     var recommendationType: DoseRecommendationType { get }
     var automaticBolusApplicationFactor: Double? { get } // Defaults to 0.4
     var gradualTransitionsThreshold: Double? { get }
+    /// Optional algorithm experiment; nil is standard LoopAlgorithm. Conforming types that do not
+    /// provide it get nil.
+    var experiment: AlgorithmExperiment? { get }
+    /// The person's volatility baseline for the `stack` experiment: the median σ5 (mg/dL per 5 min)
+    /// over their last four weeks of glucose, from `GlucoseVolatility.baseline(_:)`. When nil it is
+    /// computed from `glucoseHistory` if that holds at least a day of readings; otherwise the stack runs
+    /// its post-low rise-cut only.
+    var volatilityBaseline: Double? { get }
+}
+
+extension AlgorithmInput {
+    public var experiment: AlgorithmExperiment? { nil }
+    public var volatilityBaseline: Double? { nil }
 }

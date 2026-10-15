@@ -23,8 +23,15 @@ public class StandardRetrospectiveCorrection: RetrospectiveCorrection {
     /// All math is performed with glucose expressed in mg/dL
     private let unit = LoopUnit.milligramsPerDeciliter
 
-    public init(effectDuration: TimeInterval) {
+    /// Experimental asymmetric gains (see `AlgorithmExperiments`): multiply the correction when the
+    /// current discrepancy is negative (drop) or positive (rise). 1.0 / 1.0 is standard RC.
+    let dropScale: Double
+    let riseScale: Double
+
+    public init(effectDuration: TimeInterval, dropScale: Double = 1.0, riseScale: Double = 1.0) {
         self.effectDuration = effectDuration
+        self.dropScale = dropScale
+        self.riseScale = riseScale
     }
 
     public func computeEffect(
@@ -43,7 +50,10 @@ public class StandardRetrospectiveCorrection: RetrospectiveCorrection {
         }
         
         // Standard retrospective correction math
-        let currentDiscrepancyValue = currentDiscrepancy.quantity.doubleValue(for: unit)
+        var currentDiscrepancyValue = currentDiscrepancy.quantity.doubleValue(for: unit)
+        if dropScale != 1.0 || riseScale != 1.0 {
+            currentDiscrepancyValue *= currentDiscrepancyValue < 0 ? dropScale : riseScale
+        }
         totalGlucoseCorrectionEffect = LoopQuantity(unit: unit, doubleValue: currentDiscrepancyValue)
         
         let retrospectionTimeInterval = currentDiscrepancy.endDate.timeIntervalSince(currentDiscrepancy.startDate)
