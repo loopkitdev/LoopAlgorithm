@@ -248,7 +248,15 @@ public struct LoopAlgorithm {
         useAsymmetricMomentum: Bool = false,
         useHybridAsymmetricMomentum: Bool = false,
         momentumAlphaSlow: Double = 0.15,
-        momentumAlphaFast: Double = 0.85
+        momentumAlphaFast: Double = 0.85,
+        // LoopEval curve-split diagnostic: when non-nil, insulin counteraction (and so RC and dynamic carb
+        // absorption) is measured with these doses' curves instead of `doses`'. nil = standard.
+        iceDoses: [InsulinDoseType]? = nil,
+        // LoopEval experiment: share of POSITIVE insulin counteraction the dynamic carb model may
+        // attribute to carbs (1 = stock). The rest stays in the RC discrepancy, so RC keeps seeing
+        // part of a meal's rise while carbs are on board, and the carbs absorb more slowly.
+        plateauUamMinutes: Double = 0,
+        plateauUamGain: Double = 1.0
     ) -> LoopPrediction<CarbType> where CarbType: CarbEntry, GlucoseType: GlucoseSampleValue, InsulinDoseType: InsulinDose {
 
         var prediction: [PredictedGlucoseValue] = []
@@ -300,7 +308,17 @@ public struct LoopAlgorithm {
             }
 
             // ICE
-            insulinCounteractionEffects = glucoseHistory.counteractionEffects(to: insulinEffects)
+            if let iceDoses {
+                let iceEffects = iceDoses.annotated(with: basal).glucoseEffects(
+                    insulinSensitivityHistory: sensitivity,
+                    scheduleBaselineSensitivityHistory: scheduleBaselineSensitivity,
+                    from: insulinEffectsInterval.start,
+                    to: insulinEffectsInterval.end,
+                    decomposition: sensitivityDecomposition)
+                insulinCounteractionEffects = glucoseHistory.counteractionEffects(to: iceEffects)
+            } else {
+                insulinCounteractionEffects = glucoseHistory.counteractionEffects(to: insulinEffects)
+            }
         } else {
             activeInsulin = 0
         }
@@ -402,6 +420,29 @@ public struct LoopAlgorithm {
                     start: start,
                     projectionDuration: .minutes(uamProjectionMinutes))
                 if !uam.isEmpty { effects.append(uam) }
+            }
+
+            // Plateau UAM (experiment): the same appearance projection, but only while BG is not
+            // rising — after a dose, when the rise has stalled and RC's momentum evidence is gone,
+            // ongoing absorption balancing the insulin is otherwise forecast to stop.
+            if plateauUamMinutes > 0, plateauUamGain > 0, let last = glucoseHistory.last {
+                let bg = last.quantity.doubleValue(for: .milligramsPerDeciliter)
+                let prior = glucoseHistory.last(where: { $0.startDate <= last.startDate.addingTimeInterval(-.minutes(14)) })
+                if let prior, last.startDate.timeIntervalSince(prior.startDate) <= .minutes(20) {
+                    let slope = (bg - prior.quantity.doubleValue(for: .milligramsPerDeciliter)) / (last.startDate.timeIntervalSince(prior.startDate) / 60)
+                    let wSlope = Swift.min(1, Swift.max(0, (0.5 - slope) / 0.3))
+                    let wBG = Swift.min(1, Swift.max(0, (bg - 100) / 30))
+                    let w = wSlope * wBG * plateauUamGain
+                    if w > 0 {
+                        let uam = uamProjectionEffects(
+                            discrepancies: retrospectiveGlucoseDiscrepancies,
+                            start: start,
+                            projectionDuration: .minutes(plateauUamMinutes))
+                        if !uam.isEmpty {
+                            effects.append(uam.map { GlucoseEffect(startDate: $0.startDate, quantity: LoopQuantity(unit: .milligramsPerDeciliter, doubleValue: w * $0.quantity.doubleValue(for: .milligramsPerDeciliter))) })
+                        }
+                    }
+                }
             }
 
             // Early-ascending-limb projection (continuous complement of GBAF).
