@@ -16,6 +16,10 @@ let package = Package(
         .library(
             name: "LoopAlgorithm",
             targets: ["LoopAlgorithm"]),
+        // Loop Adaptive Algorithm: settings-free dosing (LoopEval adaptive role). Independent of LoopAlgorithm's code.
+        .library(
+            name: "LoopAdaptive",
+            targets: ["LoopAdaptive"]),
         .executable(name: "LoopAlgorithmRunner", targets: ["LoopAlgorithmRunner"])
     ],
     targets: [
@@ -24,9 +28,19 @@ let package = Package(
         .target(
             name: "LoopAlgorithm"
         ),
+        .target(
+            name: "LoopAdaptive"
+        ),
         .executableTarget(
                     name: "LoopAlgorithmRunner",
                     dependencies: ["LoopAlgorithm"]
+        ),
+        .testTarget(
+            name: "LoopAdaptiveTests",
+            dependencies: ["LoopAdaptive"],
+            resources: [
+                .copy("Fixtures")
+            ]
         ),
         .testTarget(
             name: "LoopAlgorithmTests",
