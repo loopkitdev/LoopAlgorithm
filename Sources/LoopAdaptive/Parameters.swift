@@ -48,6 +48,10 @@ public struct AdaptiveParameters: Sendable, Equatable, Codable {
     public var activeInsulinMultiplier: Double = 2 // g_iob_mult: net IOB ≤ this × maximum bolus (Loop's maxActiveInsulin)
     public var carbEntryMaximum: Double = 250  // g_carb_max, g per entry
     public var jumpLimit: Double = 40          // g_jump, mg/dL between readings ≤ 10.5 min apart
+    /// The sensor's reporting limits: a reading at or above `sensorHigh` means at least that (HIGH), one at or below
+    /// `sensorLow` means below it (LOW). Set them to the sensor's own range (e.g. Libre 3 reports up to 500).
+    public var sensorLow: Double = 40          // g_cgm_lo
+    public var sensorHigh: Double = 400        // g_cgm_hi
     public var staleDoseHistoryMinutes: Double = 15 // no automatic bolus when `doseHistoryDate` is older (Swift only)
     /// Count the doses this algorithm issued (automatic boluses and its 5-min temp basals, kept in `AdaptiveState`) as
     /// delivered when the dose history lacks them, so insulin whose record never reaches the phone is not given again.
@@ -79,6 +83,7 @@ public struct HabitMemory: Sendable, Equatable, Codable {
     var counts: [Int: Int] = [:]
     var lastFed: Date?
     var lastFedValue: Double = 0
+    var lastFedCensored = false
     var predictions: [Prediction] = []
     var feeds: [Feed] = []
     var pp = 0.0, rr = 0.0, pr = 0.0

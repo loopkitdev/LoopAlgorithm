@@ -19,9 +19,9 @@ public enum LoopAdaptive {
     public static func recommend(_ raw: AdaptiveInput, profile: AdaptiveProfile, state: inout AdaptiveState,
                                  parameters p: AdaptiveParameters = .candidate) -> AdaptiveRecommendation {
         var input = raw
-        var allCarbs: [AdaptiveCarbEntry]? = nil
+        var allCarbs: [AdaptiveCarbEntry]? = nil, censored: [Bool]? = nil
         if p.guardrails {
-            let c = Guardrails.clean(raw, p: p); input = c.input; allCarbs = c.allCarbs
+            let c = Guardrails.clean(raw, p: p); input = c.input; allCarbs = c.allCarbs; censored = c.censored
             if p.rememberIssuedBoluses { input.doses += Guardrails.unrecorded(&state.issued, in: input) }
         }
         let curve = ExponentialCurve(peak: p.insulinPeak)
@@ -50,7 +50,7 @@ public enum LoopAdaptive {
             return AdaptiveRecommendation(automaticBolus: 0, tempBasalRate: b, manualBolus: 0, diagnostics: d)
         }
         let pieces = DosePieces(input.doses)
-        let f = Features(input, curve: curve, pieces: pieces)
+        let f = Features(input, curve: curve, pieces: pieces, censored: censored)
         let stale = p.guardrails && (t - f.latestTime) / 60 > p.staleGlucoseMinutes
 
         let m = adapt(&state, t: t, glucose: f.glucose, setPointShift: dT, frozen: factor != nil || stale, profile: profile, p: p)
@@ -74,7 +74,8 @@ public enum LoopAdaptive {
         var hab = 0.0, strength: Double? = nil
         if p.habitGain > 0 {
             Habit.feed(&state.habit, input: input, pieces: pieces, curve: curve, latest: f.latestTime, glucose: f.glucose,
-                       isf: isf, basal: b, carbRatio: carbRatio, now: t, overrideActive: input.override != nil, p: p)
+                       isf: isf, basal: b, carbRatio: carbRatio, now: t, overrideActive: input.override != nil,
+                       censored: f.censored, p: p)
             let parts = Habit.parts(state.habit, at: t, p: p)
             let sk = Habit.skill(state.habit, p: p)
             if let parts {
@@ -202,13 +203,19 @@ struct Features {
     var slope15: Double
     var dG30: Double, span30: Double, absorbed30: Double
     var iob: Double, cob: Double
+    var censored: Bool                 // the newest reading is at a sensor limit (guardrails)
 
-    init(_ input: AdaptiveInput, curve: ExponentialCurve, pieces: DosePieces) {
+    init(_ input: AdaptiveInput, curve: ExponentialCurve, pieces: DosePieces, censored cens: [Bool]? = nil) {
         let t = input.now.timeIntervalSince1970
         let gt = input.glucose.map { $0.date.timeIntervalSince1970 }, gv = input.glucose.map(\.value)
+        let c = cens ?? [Bool](repeating: false, count: gv.count)
         let last = gt.last ?? t
-        glucose = gv.last ?? .nan; latestTime = last
-        func window(_ minutes: Double) -> [Int] { gt.indices.filter { gt[$0] >= last - minutes * 60 - 30 } }
+        glucose = gv.last ?? .nan; latestTime = last; censored = c.last ?? false
+        let newestCensored = censored
+        // uncensored readings only; none when the newest is censored (its rate is unknown)
+        func window(_ minutes: Double) -> [Int] {
+            newestCensored ? [] : gt.indices.filter { gt[$0] >= last - minutes * 60 - 30 && !c[$0] }
+        }
         // least-squares slope over the last 15 min, mg/dL per min
         let k15 = window(15)
         if k15.count >= 2 {

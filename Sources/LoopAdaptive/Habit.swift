@@ -39,11 +39,11 @@ enum Habit {
 
     static func feed(_ h: inout HabitMemory, input: AdaptiveInput, pieces: DosePieces, curve: ExponentialCurve,
                      latest tg: Double, glucose g: Double, isf: Double, basal b: Double, carbRatio: Double?,
-                     now t: Double, overrideActive: Bool, p: AdaptiveParameters) {
+                     now t: Double, overrideActive: Bool, censored: Bool = false, p: AdaptiveParameters) {
         let last = h.lastFed?.timeIntervalSince1970
         if let last, tg > last {
             let span = (tg - last) / 60
-            if span <= 15 && !overrideActive {
+            if span <= 15 && !overrideActive && !censored && !h.lastFedCensored {
                 var r = (g - h.lastFedValue) + isf * (Features.absorbed(pieces, curve: curve, from: last, to: tg) - b * span / 60)
                 if let cr = carbRatio { r -= isf * carbsAbsorbed(input.carbs, from: last, to: tg) / cr }
                 let v = r * 5 / span
@@ -52,7 +52,7 @@ enum Habit {
                 h.feeds.append(.init(time: tg, value: v))
             }
         }
-        if last == nil || tg > last! { h.lastFed = Date(timeIntervalSince1970: tg); h.lastFedValue = g }
+        if last == nil || tg > last! { h.lastFed = Date(timeIntervalSince1970: tg); h.lastFedValue = g; h.lastFedCensored = censored }
         h.feeds.removeAll { $0.time <= t - 7200 }
         let decay = pow(0.5, 1 / max(1, p.habitSkillHalfLifeDays * 288))
         while let first = h.predictions.first, first.start <= t - 7200 + 150 {

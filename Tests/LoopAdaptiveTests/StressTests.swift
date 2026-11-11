@@ -99,6 +99,19 @@ final class StressTests: XCTestCase {
         let off = run(p: unguarded) { m in m < 30 ? [120] : [180] }
         XCTAssertGreaterThan(off.given(from: 30, to: 60), step.given(from: 30, to: 60))
     }
+    func testSensorHighIsAtLeast400() {
+        // rising into HIGH (401) and stuck there for 4 h: dosed as 400 with no rate, so no more than the correction to
+        // target for 400 is on board at any time; without the limit, flat 401 under insulin reads as resistance
+        let isf = 688 / pow(40, 0.74)
+        let into = { (m: Double) -> [Double] in [m < 30 ? 300 + 3 * m : 401] }
+        let on = run(hours: 4, cgm: into), off = run(hours: 4, p: unguarded, cgm: into)
+        XCTAssertLessThan(on.auto, off.auto)
+        XCTAssertLessThanOrEqual(on.given(from: 30, to: 90), (400 - 110) / isf + 0.1)
+    }
+    func testSensorLowGivesNothing() {
+        let r = run(hours: 2) { m in [m >= 20 && m < 60 ? 39 : 130] }
+        XCTAssertEqual(r.given(from: 20, to: 60), 0)
+    }
     func testRealFastRiseStillCorrected() {
         let r = run { m in [min(320, 120 + 4 * m)] }                    // +4 mg/dL/min, under the jump limit
         XCTAssertGreaterThan(r.auto, 8)

@@ -53,6 +53,8 @@ final class ParityTests: XCTestCase {
         p.activeInsulinMultiplier = q["g_iob_mult"] ?? p.activeInsulinMultiplier
         p.carbEntryMaximum = q["g_carb_max"] ?? p.carbEntryMaximum
         p.jumpLimit = q["g_jump"] ?? p.jumpLimit
+        p.sensorLow = q["g_cgm_lo"] ?? p.sensorLow
+        p.sensorHigh = q["g_cgm_hi"] ?? p.sensorHigh
         return p
     }
 
