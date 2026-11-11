@@ -106,10 +106,15 @@ public struct AdaptiveInput: Sendable {
     public var userTarget: ClosedRange<Double>?
     /// the override active now, if any
     public var override: AdaptiveOverride?
+    /// the time the dose history is known complete through (the last successful pump read); nil = now. With
+    /// guardrails on, no automatic bolus is given when it is more than `staleDoseHistoryMinutes` old: insulin the
+    /// phone cannot see would otherwise be given again.
+    public var doseHistoryDate: Date?
     public init(now: Date, glucose: [AdaptiveGlucoseSample], doses: [AdaptiveDose], carbs: [AdaptiveCarbEntry] = [],
-                limits: AdaptiveLimits = .init(), userTarget: ClosedRange<Double>? = nil, override: AdaptiveOverride? = nil) {
+                limits: AdaptiveLimits = .init(), userTarget: ClosedRange<Double>? = nil, override: AdaptiveOverride? = nil,
+                doseHistoryDate: Date? = nil) {
         self.now = now; self.glucose = glucose; self.doses = doses; self.carbs = carbs; self.limits = limits
-        self.userTarget = userTarget; self.override = override
+        self.userTarget = userTarget; self.override = override; self.doseHistoryDate = doseHistoryDate
     }
 }
 
@@ -142,5 +147,11 @@ public struct AdaptiveRecommendation: Sendable, Equatable {
         public var need: Double
         public var glucoseSafetyHold: Bool
         public var forecastMinimum: Double?
+        /// guardrails: no usable reading; the newest reading is stale; the dose history is stale; the IOB limit cut
+        /// the automatic bolus
+        public var noGlucose = false
+        public var glucoseStale = false
+        public var doseHistoryStale = false
+        public var activeInsulinLimited = false
     }
 }

@@ -48,6 +48,11 @@ final class ParityTests: XCTestCase {
         p.glucoseSafetyLimitFromSettings = (q["gsl_settings"] ?? 1) != 0
         p.habitGain = q["hab_k"] ?? 0
         p.habitSkillReference = q["hab_ref"] ?? p.habitSkillReference
+        p.guardrails = (q["guard"] ?? 0) != 0                         // the reference's default is off
+        p.staleGlucoseMinutes = q["g_stale_min"] ?? p.staleGlucoseMinutes
+        p.activeInsulinMultiplier = q["g_iob_mult"] ?? p.activeInsulinMultiplier
+        p.carbEntryMaximum = q["g_carb_max"] ?? p.carbEntryMaximum
+        p.jumpLimit = q["g_jump"] ?? p.jumpLimit
         return p
     }
 
@@ -58,7 +63,8 @@ final class ParityTests: XCTestCase {
         let useTarget = (fx.params["use_target"] ?? 0) != 0, useOverride = (fx.params["use_override"] ?? 0) != 0
         let profile = AdaptiveProfile(totalDailyDose: fx.params["tdd"]!, basalRate: fx.params["basal_uh"]!, setPoint: fx.params["ad_sp"]!)
         let date = { (s: String) -> Date in Self.iso.date(from: s)! }
-        let glucose = fx.glucose.map { AdaptiveGlucoseSample(date: date($0[0].string), value: $0[1].double) }
+        // each reading carries the cycle it arrived in (a cycle may have none, or two)
+        let glucose = fx.glucose.map { (AdaptiveGlucoseSample(date: date($0[0].string), value: $0[1].double), Int($0[2].double)) }
         let doses = fx.doses.map { (AdaptiveDose(start: date($0.dose[0].string), end: date($0.dose[1].string), units: $0.dose[2].double,
                                                  kind: $0.dose[3].string == "bolus" ? .bolus : .basal, automatic: $0.dose[4].bool), $0.cycle) }
         let carbs = fx.carbs.map { (AdaptiveCarbEntry(date: date($0.entry[0].string), grams: $0.entry[1].double, absorptionTime: $0.entry[2].double), $0.cycle) }
@@ -68,7 +74,7 @@ final class ParityTests: XCTestCase {
         var worst = (bolus: 0.0, temp: 0.0, manual: 0.0, need: 0.0, scale: 0.0, hab: 0.0)
         for i in 0..<fx.cycles {
             let t = fx.start + Double(i) * 300
-            let g = Array(glucose[max(0, i - 39)...i])
+            let g = Array(glucose.filter { $0.1 <= i }.suffix(40).map(\.0))
             let d = doses.filter { $0.1 < i && $0.0.start.timeIntervalSince1970 > t - 7 * 3600 }.map(\.0)
             let c = carbs.filter { $0.1 <= i }.map(\.0)
             var ov: AdaptiveOverride? = nil
@@ -103,6 +109,8 @@ final class ParityTests: XCTestCase {
     func testGlucoseSafetyLimit() throws { try runFixture("gsl") }
     func testHabit() throws { try runFixture("habit") }
     func testHabitSafetyLimitOverride() throws { try runFixture("habit_gsl_override") }
+    func testGuardrails() throws { try runFixture("guard") }
+    func testGuardrailsHabitSafetyLimitOverride() throws { try runFixture("guard_habit_gsl_override") }
 
     func testProfileEstimate() {
         let p = AdaptiveProfile.estimate(dailyTotals: [40, 44], hourlyAutomaticDelivery: [0.5, 1.0, 0.8, 2.0], meanGlucose: 150)!

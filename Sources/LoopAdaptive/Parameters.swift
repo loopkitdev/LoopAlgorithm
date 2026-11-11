@@ -42,6 +42,17 @@ public struct AdaptiveParameters: Sendable, Equatable, Codable {
     public var habitSkillHalfLifeDays: Double = 7 // hab_hl
     public var habitLow: Double = -60          // hab_lo
     public var habitHigh: Double = 80          // hab_hi
+    // input guardrails (Guardrails.swift); the reference's `guard`, off there by default and ON here
+    public var guardrails: Bool = true         // guard
+    public var staleGlucoseMinutes: Double = 15 // g_stale_min: no automatic bolus on an older newest reading
+    public var activeInsulinMultiplier: Double = 2 // g_iob_mult: net IOB ≤ this × maximum bolus (Loop's maxActiveInsulin)
+    public var carbEntryMaximum: Double = 250  // g_carb_max, g per entry
+    public var jumpLimit: Double = 40          // g_jump, mg/dL between readings ≤ 10.5 min apart
+    public var staleDoseHistoryMinutes: Double = 15 // no automatic bolus when `doseHistoryDate` is older (Swift only)
+    /// Count the doses this algorithm issued (automatic boluses and its 5-min temp basals, kept in `AdaptiveState`) as
+    /// delivered when the dose history lacks them, so insulin whose record never reaches the phone is not given again.
+    /// Swift only; LoopEval's engine turns it off to stay identical to the reference, whose dose records are complete.
+    public var rememberIssuedBoluses: Bool = true
 
     public init() {}
     public static let candidate = AdaptiveParameters()
@@ -53,6 +64,11 @@ public struct AdaptiveState: Sendable, Equatable, Codable {
     public var lastUpdate: Date?
     public var lastLow: Date?
     public var habit = HabitMemory()
+    /// doses issued in the last 6 h 10 min (guardrails, `rememberIssuedBoluses`)
+    public var issued: [IssuedDose] = []
+    public struct IssuedDose: Sendable, Equatable, Codable {
+        public var time: Double; public var end: Double; public var units: Double; public var bolus: Bool
+    }
     public init() {}
     public var scale: Double { exp(logScale) }
 }

@@ -16,12 +16,16 @@ import Foundation
 /// Reference implementation: LoopEval `analysis/reduction/adaptive.py`, family `tdd_pd` (parity-tested).
 public enum LoopAdaptive {
 
-    public static func recommend(_ input: AdaptiveInput, profile: AdaptiveProfile, state: inout AdaptiveState,
+    public static func recommend(_ raw: AdaptiveInput, profile: AdaptiveProfile, state: inout AdaptiveState,
                                  parameters p: AdaptiveParameters = .candidate) -> AdaptiveRecommendation {
+        var input = raw
+        var allCarbs: [AdaptiveCarbEntry]? = nil
+        if p.guardrails {
+            let c = Guardrails.clean(raw, p: p); input = c.input; allCarbs = c.allCarbs
+            if p.rememberIssuedBoluses { input.doses += Guardrails.unrecorded(&state.issued, in: input) }
+        }
         let curve = ExponentialCurve(peak: p.insulinPeak)
         let t = input.now.timeIntervalSince1970
-        let pieces = DosePieces(input.doses)
-        let f = Features(input, curve: curve, pieces: pieces)
 
         // target and override
         var target = p.target
@@ -34,7 +38,22 @@ public enum LoopAdaptive {
         target = max(target, p.targetMinimum)
         let dT = target - p.target
 
-        let m = adapt(&state, t: t, glucose: f.glucose, setPointShift: dT, frozen: factor != nil, profile: profile, p: p)
+        // no usable reading: no automatic bolus, the background rate (the pump's own fallback), m frozen
+        if input.glucose.isEmpty {
+            let m = adapt(&state, t: t, glucose: .nan, setPointShift: dT, frozen: true, profile: profile, p: p)
+            var b = profile.basalRate * m * (factor ?? 1)
+            if let mb = input.limits.maximumBasalRate { b = min(b, mb) }
+            var d = AdaptiveRecommendation.Diagnostics(
+                scale: m, target: target, isf: .nan, basalRate: b, netInsulin: .nan, carbUnits: 0, retrospectiveCorrection: 0,
+                habitOffset: 0, habitStrength: nil, forecast: .nan, need: 0, glucoseSafetyHold: false, forecastMinimum: nil)
+            d.noGlucose = true
+            return AdaptiveRecommendation(automaticBolus: 0, tempBasalRate: b, manualBolus: 0, diagnostics: d)
+        }
+        let pieces = DosePieces(input.doses)
+        let f = Features(input, curve: curve, pieces: pieces)
+        let stale = p.guardrails && (t - f.latestTime) / 60 > p.staleGlucoseMinutes
+
+        let m = adapt(&state, t: t, glucose: f.glucose, setPointShift: dT, frozen: factor != nil || stale, profile: profile, p: p)
         let fac = factor ?? 1
         let tdd = profile.totalDailyDose * m
         let isf = p.isfK / pow(profile.totalDailyDose, p.isfExponent) / fac
@@ -67,17 +86,26 @@ public enum LoopAdaptive {
             strength = sk
         }
 
-        let need0 = (min(gh, f.glucose + p.riseCap) - target) / isf - net + carbUnits
+        var need0 = (min(gh, f.glucose + p.riseCap) - target) / isf - net + carbUnits
         let ghh = gh + hab
         let need = (min(ghh, f.glucose + p.riseCap) - target) / isf - net + carbUnits
 
-        var bolus = 0.0
+        var bolus = 0.0, iobLimited = false
         if need > 0 && f.glucose >= p.bolusThreshold + dT && slope > p.fallGate {
             bolus = min(p.applicationFactor * need, (input.limits.maximumBolus ?? 0) > 0 ? input.limits.maximumBolus! : 1e9)
+            if p.guardrails, let mb = input.limits.maximumBolus, mb > 0 {      // Loop's maxActiveInsulin
+                let capped = max(0, min(bolus, p.activeInsulinMultiplier * mb - net))
+                iobLimited = capped < bolus; bolus = capped
+            }
         }
         let gev = min(ghh, f.glucose + p.riseCap) - (net - carbUnits) * isf
         var temp = b * min(1, max(0, (gev - p.tempFloor) / max(target - p.tempFloor, 5)))
         if f.glucose < p.lowStop || gh < p.lowStop { temp = 0 }
+        if stale { bolus = 0; temp = f.glucose < p.lowStop ? 0 : b }
+        // carb entries dated ahead: left out of automatic dosing, counted by the bolus calculator (a pre-bolus)
+        if let all = allCarbs, all.count > input.carbs.count, let cr = carbRatio {
+            need0 += (Features.carbsOnBoard(all, now: t) - f.cob) / cr
+        }
 
         var hold = false, fcMin: Double? = nil
         var rec = max(0, need0)
@@ -109,12 +137,22 @@ public enum LoopAdaptive {
             }
         }
         if let mb = input.limits.maximumBasalRate { temp = min(temp, mb) }
+        var historyStale = false
+        if p.guardrails, let d = input.doseHistoryDate, t - d.timeIntervalSince1970 > p.staleDoseHistoryMinutes * 60 {
+            bolus = 0; historyStale = true
+        }
 
-        return AdaptiveRecommendation(
-            automaticBolus: floorTo(bolus, input.limits.bolusIncrement), tempBasalRate: temp, manualBolus: rec,
-            diagnostics: .init(scale: m, target: target, isf: isf, basalRate: b, netInsulin: net, carbUnits: carbUnits,
-                               retrospectiveCorrection: rc, habitOffset: hab, habitStrength: strength, forecast: gh,
-                               need: need, glucoseSafetyHold: hold, forecastMinimum: fcMin))
+        var d = AdaptiveRecommendation.Diagnostics(
+            scale: m, target: target, isf: isf, basalRate: b, netInsulin: net, carbUnits: carbUnits,
+            retrospectiveCorrection: rc, habitOffset: hab, habitStrength: strength, forecast: gh,
+            need: need, glucoseSafetyHold: hold, forecastMinimum: fcMin)
+        d.glucoseStale = stale; d.doseHistoryStale = historyStale; d.activeInsulinLimited = iobLimited
+        let given = floorTo(bolus, input.limits.bolusIncrement)
+        if p.guardrails && p.rememberIssuedBoluses {
+            if given > 0 { state.issued.append(.init(time: t, end: t, units: given, bolus: true)) }
+            state.issued.append(.init(time: t, end: t + 300, units: temp / 12, bolus: false))
+        }
+        return AdaptiveRecommendation(automaticBolus: given, tempBasalRate: temp, manualBolus: rec, diagnostics: d)
     }
 
     /// The adaptive scale m: ln m integrates glucose against the set point; it does not rise for `adaptBrakeHours`
@@ -122,7 +160,7 @@ public enum LoopAdaptive {
     static func adapt(_ s: inout AdaptiveState, t: Double, glucose g: Double, setPointShift: Double, frozen: Bool,
                       profile: AdaptiveProfile, p: AdaptiveParameters) -> Double {
         guard p.adaptEnabled else { return 1 }
-        if let last = s.lastUpdate?.timeIntervalSince1970, !frozen {
+        if let last = s.lastUpdate?.timeIntervalSince1970, !frozen, g.isFinite {
             let sp = profile.setPoint + setPointShift
             let dt = min(max(t - last, 0), 1800) / 86400
             if g < 70 { s.lastLow = Date(timeIntervalSince1970: t) }
@@ -178,7 +216,7 @@ struct Features {
             let mx = x.reduce(0, +) / Double(x.count), my = y.reduce(0, +) / Double(y.count)
             var sxy = 0.0, sxx = 0.0
             for i in x.indices { sxy += (x[i] - mx) * (y[i] - my); sxx += (x[i] - mx) * (x[i] - mx) }
-            slope15 = (x.max()! - x.min()!) > 0 && sxx > 0 ? sxy / sxx : 0
+            slope15 = (x.max()! - x.min()!) > 0 && sxx > 0 ? (sxy / sxx * 1e9).rounded(.toNearestOrEven) / 1e9 : 0  // as the reference
         } else { slope15 = 0 }
         let k30 = window(30)
         if k30.count >= 2 {
@@ -191,13 +229,19 @@ struct Features {
             else if pieces.times[j] < t { iob += pieces.units[j] * curve.remaining((t - pieces.times[j]) / 60) }
         }
         self.iob = iob
+        cob = Features.carbsOnBoard(input.carbs, now: t)
+    }
+
+    /// g of entered carbs not yet absorbed (linear over each entry's absorption time, 3 h by default; a future entry
+    /// counts in full).
+    static func carbsOnBoard(_ carbs: [AdaptiveCarbEntry], now t: Double) -> Double {
         var cob = 0.0
-        for c in input.carbs {
+        for c in carbs {
             let el = (t - c.date.timeIntervalSince1970) / 60
             let dur = ((c.absorptionTime ?? 0) > 0 ? c.absorptionTime! : 10800) / 60
             if el >= 0 && el < dur { cob += c.grams * (1 - el / dur) } else if el < 0 { cob += c.grams }
         }
-        self.cob = cob
+        return cob
     }
 
     /// U absorbed in (t0, t1] from every dose.
